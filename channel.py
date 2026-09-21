@@ -113,6 +113,7 @@ class DingTalkAIChannel(DingTalkChannel):
     async def cancel_turn(self, turn):
         if turn and turn.status not in TERMINAL:
             turn.status, turn.error = "cancelled", "本次任务已停止。"
+            turn.ended = time.time()
             turn.answer = turn.error
             for approval in turn.pending():
                 approval["status"] = "expired"
@@ -293,6 +294,7 @@ class DingTalkAIChannel(DingTalkChannel):
             return
         if turn.status not in TERMINAL:
             turn.status = "completed"
+        turn.ended = turn.ended or time.time()
         for step in turn.steps:
             if step.status == "running":
                 step.status = "completed" if turn.status == "completed" else "interrupted"
@@ -360,7 +362,11 @@ class DingTalkAIChannel(DingTalkChannel):
     @staticmethod
     def callback_response(public=None, private=None, *, success=True):
         result = {"cardUpdateOptions": {"updateCardDataByKey": True, "updatePrivateDataByKey": True}}
+        private = dict(private or {})
         if public is not None:
+            public = dict(public)
+            if "processRows" in public:
+                private["processRows"] = public.pop("processRows")
             result["cardData"] = {"cardParamMap": public}
         result["userPrivateData"] = {"cardParamMap": {
             **(private or {}), "actionResult": "ok" if success else "error"}}
@@ -382,6 +388,13 @@ class DingTalkAIChannel(DingTalkChannel):
             if not turn.staff_id or str(payload.get("userId") or "") != turn.staff_id:
                 raise ValueError("只有发起本轮对话的用户可以操作此卡片")
             action = params.get("action")
+            if action in {"inline_page", "process_page"}:
+                key = str(params.get("step_id") or "") if action == "inline_page" else "_process"
+                if action == "inline_page" and not any(s.id == key for s in turn.steps):
+                    raise ValueError("过程记录不存在或已过期")
+                turn.view_pages[key] = max(0, int(params.get("page", 0)))
+                self.store.save(turn)
+                return self.callback_response(public=project(turn, page_bytes=self.page_bytes))
             if action in {"approve", "deny"}:
                 from qwenpaw.app.approvals.service import get_approval_service
                 from qwenpaw.security.tool_guard.approval import ApprovalDecision, ApprovalScope
@@ -421,6 +434,7 @@ class DingTalkAIChannel(DingTalkChannel):
         for turn in self.store.recent(10000):
             if turn.status not in TERMINAL:
                 turn.status, turn.error = "interrupted", "服务重启，请重新发送消息。"
+                turn.ended = time.time()
                 for approval in turn.pending():
                     approval["status"] = "expired"
                 turn.touch()
@@ -452,6 +466,7 @@ class DingTalkAIChannel(DingTalkChannel):
             for turn in self.turns.values():
                 if turn.status not in TERMINAL:
                     turn.status, turn.error = "interrupted", "渠道已停止，请重新发送消息。"
+                    turn.ended = time.time()
                     turn.touch()
                     self.store.save(turn)
                     try:

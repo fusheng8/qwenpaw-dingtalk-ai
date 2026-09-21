@@ -30,10 +30,12 @@ def test_completion_collapses_history_without_losing_it():
     t.step("tool", "tool", "ls").content = "file.txt"
     before = detail(t, "step", step_id="tool")
     assert before["detailEpoch"] == "active"
-    assert json.loads(project(t)["toolButtons"])[0]["text"] == "ls"
+    assert json.loads(project(t)["processRows"])[1]["title"] == "ls"
     t.status, t.answer = "completed", "最终回答"
     final = project(t)
-    assert final["thought"] == "" and final["toolButtons"] == "[]"
+    assert final["thought"] == ""
+    assert json.loads(final["processRows"])[1]["body"] == "file.txt"
+    assert not any(b["action"] == "history" for b in json.loads(final["controls"]))
     assert final["epoch"] != before["detailEpoch"]
     assert detail(t, "step", step_id="tool")["detailEpoch"] == "done"
     assert final["content"] == "最终回答"
@@ -42,3 +44,28 @@ def test_completion_collapses_history_without_losing_it():
 def test_ids_isolate_agents_and_messages():
     assert identity("a", "1") == identity("a", "1")
     assert len({identity("a", "1"), identity("a", "2"), identity("b", "1")}) == 3
+
+
+def test_inline_result_pages_are_lossless_and_finished_duration_stays_fixed():
+    t = Turn("t", "s", "u", "staff", "c", created=100, ended=111, updated=200, status="completed")
+    content = "完整工具结果🌏" * 2000
+    t.step("tool", "tool", "分析销售数据").content = content
+    chunks = pages(content)
+    received = []
+    for i in range(len(chunks)):
+        t.view_pages["tool"] = i
+        data = project(t)
+        received.append(json.loads(data["processRows"])[0]["body"])
+        assert data["processTitle"] == "已处理 11 秒"
+    assert "".join(received) == content
+
+
+def test_old_process_steps_remain_reachable_without_history_button():
+    t = Turn("t", "s", "u", "staff", "c")
+    for i in range(18):
+        t.step(str(i), "tool", "命令" + str(i)).content = "结果"
+    assert json.loads(project(t)["processRows"])[-1]["id"] == "17"
+    t.view_pages["_process"] = 0
+    first = project(t)
+    assert json.loads(first["processRows"])[0]["id"] == "0"
+    assert json.loads(first["processNavigation"])[0]["action"] == "process_page"

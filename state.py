@@ -78,6 +78,8 @@ class Turn:
     finalized: bool = False
     error: str = ""
     revision: int = 0
+    ended: float = 0
+    view_pages: dict[str, int] = field(default_factory=dict)
 
     def touch(self):
         self.updated = time.time()
@@ -150,7 +152,7 @@ def button(label: str, action: str, turn: Turn, **params) -> dict:
 
 
 def project(turn: Turn, *, page_bytes: int = 1800) -> dict[str, str]:
-    """Public card data. Heavy detail is retrieved into private card variables."""
+    """Inline process pages; expanding native panels needs no callback."""
     answer_pages = pages(turn.answer, page_bytes)
     thought = next((s for s in reversed(turn.steps) if s.kind == "reasoning"), None)
     status = {
@@ -162,8 +164,31 @@ def project(turn: Turn, *, page_bytes: int = 1800) -> dict[str, str]:
     controls = []
     if len(answer_pages) > 1:
         controls.append(button(f"阅读全文 · {len(answer_pages)} 页", "answer", turn, page=0))
-    controls.append(button(f"查看过程 · {len(turn.steps)} 项", "history", turn, page=0))
-    tool_buttons = [button(s.title[:100], "step", turn, step_id=s.id) for s in turn.steps[-8:] if s.kind == "tool"] if turn.status not in TERMINAL else []
+    process_steps = [s for s in turn.steps if s.kind != "approval"]
+    groups = [process_steps[i:i + 8] for i in range(0, len(process_steps), 8)] or [[]]
+    group = max(0, min(turn.view_pages.get("_process", len(groups) - 1), len(groups) - 1))
+    rows = []
+    for step in groups[group]:
+        body = (step.arguments + "\n\n" if step.arguments else "") + step.content
+        chunks = pages(body, page_bytes)
+        default_page = len(chunks) - 1 if step.kind == "reasoning" and turn.status not in TERMINAL else 0
+        page = max(0, min(turn.view_pages.get(step.id, default_page), len(chunks) - 1))
+        navigation = []
+        if page:
+            navigation.append(button("上一页", "inline_page", turn, step_id=step.id, page=page - 1))
+        if page + 1 < len(chunks):
+            navigation.append(button("下一页", "inline_page", turn, step_id=step.id, page=page + 1))
+        rows.append({"id": step.id, "kind": "thought" if step.kind in {"reasoning", "progress"} else "tool",
+            "title": step.title, "body": chunks[page] or "正在等待输出…",
+            "pageLabel": f"第 {page + 1}/{len(chunks)} 页" if len(chunks) > 1 else "",
+            "navigation": navigation})
+    process_navigation = []
+    if group:
+        process_navigation.append(button("较早过程", "process_page", turn, page=group - 1))
+    if group + 1 < len(groups):
+        process_navigation.append(button("较新过程", "process_page", turn, page=group + 1))
+    elapsed = max(0, int((turn.ended or turn.updated if turn.status in TERMINAL else time.time()) - turn.created))
+    process_title = f"已处理 {elapsed} 秒" if turn.status in TERMINAL else f"{status} · {elapsed} 秒"
     approval_buttons = []
     if approval:
         for label, action in [("批准本次", "approve"), ("拒绝", "deny")]:
@@ -172,7 +197,7 @@ def project(turn: Turn, *, page_bytes: int = 1800) -> dict[str, str]:
     data = {
         "status": status, "phase": turn.status, "turnId": turn.id,
         "thought": pages(thought.content, page_bytes)[-1] if thought and turn.status not in TERMINAL else "",
-        "toolButtons": tool_buttons,
+        "processTitle": process_title, "processRows": rows, "processNavigation": process_navigation,
         "epoch": "done" if turn.status in TERMINAL else "active",
         "controls": controls,
         "approvalTitle": approval["title"] if approval else "",

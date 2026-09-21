@@ -59,10 +59,19 @@ class CardTransport:
                     raise CardAPIError("连接钉钉卡片服务超时") from None
             await asyncio.sleep(min(0.5 * 2**attempt, 4))
 
+    @staticmethod
+    def card_data(turn, data):
+        public = dict(data)
+        rows = public.pop("processRows", "[]")
+        result = {"cardData": {"cardParamMap": public}}
+        if turn.staff_id:
+            result["privateData"] = {turn.staff_id: {"cardParamMap": {"processRows": rows}}}
+        return result
+
     async def create(self, turn, data):
         payload = {"cardTemplateId": self.template_id, "outTrackId": turn.id,
             "callbackType": "STREAM", "userIdType": 1,
-            "cardData": {"cardParamMap": data},
+            **self.card_data(turn, data),
             "imGroupOpenSpaceModel": {"supportForward": False},
             "imRobotOpenSpaceModel": {"supportForward": False}}
         if turn.is_group:
@@ -77,8 +86,8 @@ class CardTransport:
 
     async def update(self, turn, data):
         return await self.request("PUT", "/v1.0/card/instances", {
-            "outTrackId": turn.id, "cardData": {"cardParamMap": data},
-            "cardUpdateOptions": {"updateCardDataByKey": True}})
+            "outTrackId": turn.id, "userIdType": 1, **self.card_data(turn, data),
+            "cardUpdateOptions": {"updateCardDataByKey": True, "updatePrivateDataByKey": True}})
 
     async def stream(self, turn, content, final=False):
         return await self.request("PUT", "/v1.0/card/streaming", {

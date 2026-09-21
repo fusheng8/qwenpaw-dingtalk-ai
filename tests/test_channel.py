@@ -180,3 +180,16 @@ async def test_error_and_cancel_disable_approval(channel):
     t2 = channel.find_turn(req2)
     await channel.cancel_turn(t2)
     assert t2.finalized and t2.status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_inline_paging_updates_result_in_place_without_new_card(channel):
+    req = request(); await channel._before_consume_process(req)
+    turn = channel.find_turn(req)
+    turn.step("cmd", "tool", "读取数据").content = "甲" * 600 + "乙" * 600
+    response = await channel.card_callback(callback(turn, "inline_page", step_id="cmd", page=1))
+    rows = json.loads(response["userPrivateData"]["cardParamMap"]["processRows"])
+    assert rows[0]["body"] == "乙" * 600
+    assert "processRows" not in response["cardData"]["cardParamMap"]
+    assert rows[0]["navigation"][0]["action"] == "inline_page"
+    channel.transport.create.assert_awaited_once()

@@ -22,3 +22,17 @@ async def test_create_and_updates_keep_one_card_and_explicit_user_id_type():
     data = api.request.await_args.args[2]
     assert data["outTrackId"] == "same-card" and data["isFinalize"] is True
     assert data["key"] == "content" and data["isFull"] is True
+
+
+@pytest.mark.asyncio
+async def test_inline_process_is_delivered_only_to_initiator():
+    api = CardTransport("app", "placeholder", "template")
+    api.request = AsyncMock(return_value={"success": True})
+    t = Turn("card", "s", "u", "staff", "group", is_group=True)
+    projection = {"content": "最终回答", "processRows": '[{"body":"完整结果"}]'}
+    for method in (api.create, api.update):
+        await method(t, projection)
+        payload = api.request.await_args.args[2]
+        assert "processRows" not in payload["cardData"]["cardParamMap"]
+        assert payload["privateData"]["staff"]["cardParamMap"]["processRows"] == projection["processRows"]
+    assert "processRows" in projection

@@ -19,7 +19,7 @@ def test_editor_and_native_trees_have_matching_ids_and_callbacks():
     assert editor["extension"]["extendType"] == "AI"
     private = {v["name"] for v in editor["variableList"] if v["private"]}
     assert {"detailBody", "detailEpoch", "detailButtons"} <= private
-    actions = [x.get("onTap", "") for x in native.iter() if x.get("onTap")]
+    actions = [x.get("onTap", "") for x in native.iter() if "'actionType','0'" in x.get("onTap", "")]
     assert actions and all("turn_id" in s and "approval_id" in s for s in actions)
 
 
@@ -30,7 +30,7 @@ def test_card_build_is_reproducible():
     assert module["build"]() == actual
 
 
-def test_all_seven_request_buttons_have_success_conditions_and_chinese_examples():
+def test_all_request_buttons_have_success_conditions_and_chinese_examples():
     card = json.loads((ROOT / "cards/dingtalk-ai-card.json").read_text())
     editor = json.loads(card["editorData"])
     def walk(node):
@@ -38,7 +38,7 @@ def test_all_seven_request_buttons_have_success_conditions_and_chinese_examples(
         for child in node.get("children", []):
             yield from walk(child)
     buttons = [n for n in walk(editor["schema"]["componentsTree"][0]) if n["componentName"] == "SingleButton"]
-    assert len(buttons) == 7
+    assert buttons
     for button in buttons:
         conditions = button["props"]["successCondition"]["conditions"]
         assert len(conditions) == 1
@@ -46,5 +46,27 @@ def test_all_seven_request_buttons_have_success_conditions_and_chinese_examples(
         assert conditions[0]["op"] == "equal" and conditions[0]["value"] == "ok"
     assert next(v for v in editor["variableList"] if v["name"] == "actionResult")["private"]
     sample = editor["mockData"]["cardData"]
-    assert "分析销售数据" in sample["toolButtons"][0]["text"]
+    assert "分析销售数据" in editor["mockData"]["cardPrivateData"]["processRows"][1]["title"]
     assert "本月销售额" in sample["content"]
+
+
+def test_native_fold_state_is_local_and_reset_at_completion():
+    card = json.loads((ROOT / "cards/dingtalk-ai-card.json").read_text())
+    editor = json.loads(card["editorData"])
+    def walk(node):
+        yield node
+        for child in node.get("children", []):
+            yield from walk(child)
+    nodes = {n["id"]: n for n in walk(editor["schema"]["componentsTree"][0])}
+    for name in ["process", "thought"]:
+        assert nodes["qpai_p2_" + name]["props"]["contentVisible"] is True
+        assert nodes["qpai_p3_" + name]["props"]["contentVisible"] is False
+    for phase in (2, 3):
+        assert nodes[f"qpai_p{phase}_tool"]["props"]["contentVisible"] is False
+    assert "查看过程" not in card["editorData"]
+    native = ET.fromstring(card["widgetInfo"])
+    panels = [x for x in native.iter() if x.get("userId") in {n["id"] for n in nodes.values() if n["componentName"] == "CollapsePanel"}]
+    assert len(panels) == 6
+    for panel in panels:
+        tap = panel[0].get("onTap")
+        assert "localData" in tap and "actionType" not in tap
