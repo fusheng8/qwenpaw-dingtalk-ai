@@ -93,3 +93,31 @@ def test_all_external_activities_have_status_and_lossless_details():
     assert rows[-1]["body"].startswith(step.arguments)
     assert rows[-1]["codeBody"].startswith("````text\n")
     assert rows[-1]["resultStatus"] == "已完成"
+
+
+def test_empty_reasoning_does_not_create_empty_disclosure():
+    t = Turn("t", "s", "u", "staff", "c", status="completed", answer="你好！")
+    t.step("empty", "reasoning", "").content = "  "
+    data = project(t)
+    assert data["hasProcess"] == "no" and json.loads(data["processRows"]) == []
+    t.steps[0].content = "有内容的思考"
+    data = project(t)
+    assert data["hasProcess"] == "yes"
+    assert json.loads(data["processRows"])[0]["title"] == "思考过程"
+
+
+def test_action_sheet_pages_preserve_full_results_and_navigation_boundaries():
+    t = Turn("t", "s", "u", "staff", "c")
+    step = t.step("tool", "tool", "执行命令")
+    step.content = "完整输出" * 500
+    total = len(pages(step.content))
+    result = []
+    for i in range(total):
+        t.view_pages[step.id] = i
+        row = json.loads(project(t)["processRows"])[0]
+        result.append(row["body"])
+        assert row["sheetBody"].endswith(row["body"])
+        assert int(row["previousPage"]) == max(0, i - 1)
+        assert int(row["nextPage"]) == min(total - 1, i + 1)
+        assert row["sheetPosition"] == ("start" if i == 0 else "end" if i == total - 1 else "middle")
+    assert "".join(result) == step.content

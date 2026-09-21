@@ -196,7 +196,7 @@ def project(turn: Turn, *, page_bytes: int = 1800) -> dict[str, str]:
     controls = []
     if len(answer_pages) > 1:
         controls.append(button(f"阅读全文 · {len(answer_pages)} 页", "answer", turn, page=0))
-    process_steps = [s for s in turn.steps if s.kind != "approval"]
+    process_steps = [s for s in turn.steps if s.kind != "approval" and (s.kind not in {"reasoning", "progress"} or s.content.strip())]
     groups = [process_steps[i:i + 8] for i in range(0, len(process_steps), 8)] or [[]]
     group = max(0, min(turn.view_pages.get("_process", len(groups) - 1), len(groups) - 1))
     rows = []
@@ -211,11 +211,15 @@ def project(turn: Turn, *, page_bytes: int = 1800) -> dict[str, str]:
         if page + 1 < len(chunks):
             navigation.append(button("下一页", "inline_page", turn, step_id=step.id, page=page + 1))
         is_thought = step.kind in {"reasoning", "progress"}
-        title, icon = (step.title, "thought") if is_thought else activity(step)
+        title, icon = (step.title or "思考过程", "thought") if is_thought else activity(step)
         raw = chunks[page] or "正在等待输出…"
         fence = "`" * max(3, 1 + max((len(m[0]) for m in re.finditer(r"`+", raw)), default=0))
         rows.append({"id": step.id, "kind": "thought" if is_thought else "tool",
             "title": title, "icon": icon, "body": raw,
+            "sheetTitle": f"{step.name or step.title or '工具详情'} · 第 {page + 1}/{len(chunks)} 页",
+            "sheetBody": STATUS_LABELS.get(step.status, "执行中") + "\n\n" + raw,
+            "sheetPosition": "single" if len(chunks) == 1 else "start" if page == 0 else "end" if page == len(chunks) - 1 else "middle",
+            "turn_id": turn.id, "previousPage": str(max(0, page - 1)), "nextPage": str(min(len(chunks) - 1, page + 1)),
             "toolName": step.name or ("Shell" if icon == "command" else "工具"),
             "codeBody": f"{fence}text\n{raw}\n{fence}",
             "resultStatus": STATUS_LABELS.get(step.status, "执行中"),
@@ -236,6 +240,7 @@ def project(turn: Turn, *, page_bytes: int = 1800) -> dict[str, str]:
     data = {
         "status": status, "phase": turn.status, "turnId": turn.id,
         "thought": pages(thought.content, page_bytes)[-1] if thought and turn.status not in TERMINAL else "",
+        "hasProcess": "yes" if process_steps else "no",
         "processTitle": process_title, "processRows": rows, "processNavigation": process_navigation,
         "epoch": "done" if turn.status in TERMINAL else "active",
         "controls": controls,

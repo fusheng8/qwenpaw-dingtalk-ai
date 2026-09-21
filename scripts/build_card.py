@@ -12,8 +12,10 @@ PRIVATE = {"detailTitle", "detailBody", "detailButtons", "detailVisible", "detai
 MARKDOWN = {"content", "thought", "approvalBody", "detailBody"}
 LISTS = {"controls", "processNavigation", "approvalButtons", "detailButtons"}
 BUTTON_KEYS = ("text", "action", "turn_id", "step_id", "approval_id", "page")
-NAMES = {"status", "phase", "turnId", "epoch", "lastMessage", "flowStatus", "approvalTitle", "hasApproval", "processTitle", "processRows", *PRIVATE, *MARKDOWN, *LISTS}
+NAMES = {"status", "phase", "turnId", "epoch", "lastMessage", "flowStatus", "approvalTitle", "hasApproval", "processTitle", "processRows", "hasProcess", *PRIVATE, *MARKDOWN, *LISTS}
 components = set()
+LOCAL = {}
+EXPRESSIONS = []
 
 
 def variable(name, kind="string", private=False):
@@ -49,7 +51,7 @@ def node(kind, key, props=None, children=None):
 
 
 def data(name):
-    scope = "cardPrivateData" if name in PRIVATE else "cardData"
+    scope = "localData" if name in LOCAL else "cardPrivateData" if name in PRIVATE else "cardData"
     return "@data{data." + scope + "." + name + "}"
 
 
@@ -69,8 +71,10 @@ def wrap(key, *conditions):
     if conditions:
         terms = []
         for c in conditions:
-            rhs = data(c["valueVariable"]) if c["valueType"] == "variable" else "'" + str(c["value"]) + "'"
-            terms.append("@equal{" + data(c["variable"]) + "," + rhs + "}")
+            rhs = ("@subdata{'" + c["valueVariable"].split(".")[-1] + "'}" if c.get("valueVariableType") == "loop" else data(c["valueVariable"])) if c["valueType"] == "variable" else str(c["value"]) if isinstance(c["value"], (int, float)) else "'" + str(c["value"]) + "'"
+            lhs = "@subdata{'" + c["variable"].split(".")[-1] + "'}" if c.get("variableType") == "loop" else data(c["variable"])
+            term = "@equal{" + lhs + "," + rhs + "}"
+            terms.append("@not{" + term + "}" if c["op"] == "notEqual" else term)
         expression = terms[0] if len(terms) == 1 else "@and{" + ",".join(terms) + "}"
         x.set("visibility", show(expression))
     return n, x
@@ -95,10 +99,10 @@ def markdown(key, field, streaming=False, loop=False):
 
 
 def buttons(key, field, loop=False):
-    child = node("SingleButton", key + "_button", {"text": string("${" + field + "[0].text}"),
+    child = node("SingleButton", key + "_button", {"text": string("${loop.text}"),
         "status": {"type": "dynamicSelect", "valueType": "fixed", "value": "normal"},
         "color": {"type": "dynamicSelect", "valueType": "fixed", "value": "gray"},
-        "actionType": "request", "actionId": string("${" + field + "[0].action}"),
+        "actionType": "request", "actionId": string("${loop.action}"),
         "params": [{"id": str(i), "name": k, "type": "variable", "variable": field + "[0]." + k,
                     "variableType": "loop", "value": ""} for i, k in enumerate(BUTTON_KEYS[1:])],
         "visible": visible(), "marginLeft": 12, "marginRight": 12, "marginTop": 4, "marginBottom": 4,
@@ -122,89 +126,125 @@ def append(pair, child):
     pair[0]["children"].append(child[0]); pair[1].append(child[1])
 
 
-def collapse(key, title, expanded=False, loop=False, kind=None):
-    """Native local toggle. Stable row IDs survive streaming updates."""
-    id_text = "${processRows[0].id}" if loop else "${turnId}"
-    n = node("CollapsePanel", key, {"id": string(id_text), "title": string("${" + title + "}"),
-        "contentVisible": expanded, "marginLeft": 12, "marginRight": 12,
-        "marginTop": 4, "marginBottom": 4, "visible": visible()}, [])
-    if kind:
-        c = cond("processRows[0].kind", kind); c["variableType"] = "loop"
-        n["props"]["visible"] = visible(c)
-    identity = "@subdata{'id'}" if loop else data("turnId")
-    local_key = "@concat{" + identity + ",'" + n["id"] + "'}"
-    state = "@data{@concat{'data.localData.'," + local_key + "}}"
-    opened = "@not{" + state + "}" if expanded else state
-    x = xml(userId=n["id"], orientation="vertical", marginLeft="12np", marginRight="12np",
-        marginTop="4np", marginBottom="4np")
-    if kind:
-        x.set("visibility", show("@equal{@subdata{'kind'},'" + kind + "'}"))
-    header = xml(orientation="horizontal", childGravity="leftCenter", paddingTop="8np", paddingBottom="8np",
-        onTap="@dtSendOutData{@dtMapAppend{null,'localData',@dtMapAppend{@data{data.localData}," + local_key + ",@triple{" + state + ",0,1}}}}")
-    if kind == "tool":
-        # Small native outline glyphs, with no external image dependency.
-        glyph = xml(orientation="horizontal", width="20np", height="20np", marginRight="8np", childGravity="center")
-        terminal = xml("FastTextView", width="16np", height="16np", text=">_", textSize="10np", textGravity="center",
-            cornerRadius="3np", borderWidth="1np", borderColor="@dtDarkModeAdapter{'#787B80','#B0B4BA'}",
-            textColor="@dtDarkModeAdapter{'#787B80','#B0B4BA'}",
-            visibility=show("@not{@or{@equal{@subdata{'icon'},'edit'},@equal{@subdata{'icon'},'file'}}}"))
-        glyph.append(terminal)
-        for icon, symbol in (("edit", "::icon_compile::"), ("file", "::icon_sharefile::")):
-            glyph.append(xml("DDIconView", width="18np", height="18np", text=symbol, textSize="16np",
-                textColor="@dtDarkModeAdapter{'#787B80','#B0B4BA'}", visibility=show("@equal{@subdata{'icon'},'" + icon + "'}")))
-        header.append(glyph)
-    else:
-        header.append(xml("DDIconView", width="match_content", text="@triple{" + opened + ",'::icon_XDS_downarrow::','::icon_XDS_rightarrow::'}",
-            textSize="13np", marginRight="6np", textColor="@dtDarkModeAdapter{'#8A8D91','#A0A4AA'}"))
-    header.append(xml("FastTextView", text="@subdata{'title'}" if loop else data(title), textSize="14np",
-        maxLines="1" if kind == "tool" else "2", lineBreakMode="end", textColor="@dtDarkModeAdapter{'#787B80','#B0B4BA'}"))
-    x.append(header)
-    body = xml(orientation="vertical", visibility=show(opened))
-    x.append(body)
-    return (n, x), (n, body)
+def material_disclosure(prefix, running):
+    """Use the user's exported 展开折叠 material, not CollapsePanel."""
+    material = json.loads((ROOT / "scripts/disclosure-material.json").read_text())
+    n = material["schema"]
+    x = ET.fromstring(material["native"])
+    local, next_var = prefix + "process_open", prefix + "next_open"
+    LOCAL[local] = "string"
+    EXPRESSIONS.append({"id": next_var, "name": next_var, "type": "string", "private": False,
+        "editorVarType": "expList", "expContent": f'{local} ? "" : "1"'})
+    ids = {}
+    def prepare(node):
+        old = node["id"]; ids[old] = "qpai_" + prefix + old
+        node["id"] = ids[old]; components.add(node["componentName"])
+        for child in node.get("children", []): prepare(child)
+    prepare(n)
+    serialized = json.dumps(n, ensure_ascii=False).replace('nextExpend6', next_var).replace('expend6', local).replace('expendTitle6', 'processTitle')
+    n = json.loads(serialized)
+    for el in x.iter():
+        if el.get("userId") in ids: el.set("userId", ids[el.get("userId")])
+        for key, value in list(el.attrib.items()):
+            el.set(key, value.replace('expend6', local).replace('expendTitle6', 'processTitle'))
+    header, body = n["children"]
+    # Drop the sample content and put real reasoning and tool links here.
+    removed = {child["id"] for child in body.get("children", [])}
+    body["children"] = []
+    bx = next(el for el in x.iter() if el.get("userId") == body["id"])
+    for el in list(bx): bx.remove(el)
+    hx = next(el for el in x.iter() if el.get("userId") == header["id"])
+    action = next(c["props"] for c in header["children"] if c["props"].get("actionType") == "setLocalState")
+    for key in ("actionType", "localVarAction", "stringLocalValue"):
+        header["props"][key] = action[key]
+    header["props"]["enableClickEvent"] = True
+    hx.set("onTap", next(el.get("onTap") for el in hx.iter() if el.get("onTap")))
+    for node in (n, header, body):
+        node["props"].update({"marginLeft": 0, "marginRight": 0, "marginTop": 2, "marginBottom": 2})
+    # Separate phase keys ensure completion starts collapsed.
+    def visibility(node):
+        conditions = node["props"].get("visible", {}).get("condition", {}).get("conditions", [])
+        for c in conditions:
+            if c.get("variable") == local and running:
+                if c["op"] == "equal": c["op"] = "notEqual"
+                elif c["op"] == "isEmpty": c.update(op="equal", value="1")
+        for child in node.get("children", []): visibility(child)
+    visibility(n)
+    for el in x.iter():
+        v = el.get("visibility", "")
+        if local in v and running:
+            eq = "@equal{@toStr{" + data(local) + "},@toStr{'1'}}"
+            el.set("visibility", show("@not{" + eq + "}" if "@equal" in v else eq))
+    n["props"]["visible"] = visible(cond("hasProcess"))
+    x.set("visibility", show("@equal{" + data("hasProcess") + ",'yes'}"))
+    return (n, x), (body, bx)
+
+
+def map_expr(values):
+    return "@dtMapAppend{null," + ",".join("'" + key + "'," + value for key, value in values.items()) + "}"
+
+
+def localized(value):
+    return map_expr({"zh_CN": value, "en_US": value})
+
+
+def tool_link(key, position):
+    conditions = [cond("processRows[0].kind", "tool"), cond("processRows[0].sheetPosition", position)]
+    for c in conditions: c["variableType"] = "loop"
+    items, native_items = [], []
+    actions = []
+    if position in {"middle", "end"}: actions.append(("上一页", "inline_page", "previousPage"))
+    if position in {"start", "middle"}: actions.append(("下一页", "inline_page", "nextPage"))
+    actions.append(("关闭", "close", None))
+    for index, (label, action, page) in enumerate(actions):
+        values = {"action": action, "turn_id": "turn_id", "step_id": "id", "page": page}
+        params, native_params = [], {}
+        for name, value in values.items():
+            fixed = name == "action" or value is None
+            params.append({"id": name, "name": name, "type": "fixed" if fixed else "variable", "value": value or "0",
+                "variable": "" if fixed else "processRows[0]." + value, "variableType": "loop"})
+            native_params[name] = "'" + (value or "0") + "'" if fixed else "@subdata{'" + value + "'}"
+        toast = "已切换，请再次点击工具链接查看该页" if page else ""
+        items.append({"id": str(index), "actionSheetStyle": "default", "actionSheetName": string(label),
+            "actionSheetDesc": string(""), "actionSheetAction": "request", "actionSheetRequestItemActionId": string(action),
+            "actionSheetRequestItemParams": params, "actionSheetRequestItemSuccessToast": string(toast)})
+        payload = map_expr({"actionType": "'0'", "cardInstanceId": "@data{data.cardInstanceId}", "actionId": "'" + action + "'",
+            "actionData": map_expr({"context": "@data{data.renderContext}", "cardPrivateData": map_expr({"params": map_expr(native_params), "actionIds": "@dtArrayAppend{null,'" + action + "'}"})}),
+            "requestEventId": "'" + action + "'", "requestStatusKey": "'" + key + "'", "successActionText": "'" + toast + "'"})
+        native_items.append(map_expr({"style": "'default'", "name": localized("'" + label + "'"), "desc": localized("''"), "icon": "''", "action": "'dtSendOutData'", "data": payload}))
+    n = node("Link", key, {"text": string("${loop.title}"), "maxLine": 1, "size": "small",
+        "marginLeft": 12, "marginRight": 12, "marginTop": 6, "marginBottom": 6,
+        "visible": visible(*conditions), "actionType": "actionSheet", "enableClickEvent": True,
+        "actionSheetTitle": string("${loop.sheetTitle}"), "actionSheetMessage": string("${loop.sheetBody}"),
+        "actionSheetItems": items, "disabledWhileForward": True})
+    sheet = map_expr({"title": localized("@subdata{'sheetTitle'}"), "message": localized("@subdata{'sheetBody'}"),
+        "items": "@dtArrayAppend{null," + ",".join(native_items) + "}"})
+    x = xml(userId=n["id"], marginLeft="12np", marginRight="12np", marginTop="6np", marginBottom="6np",
+        visibility=show("@and{@equal{@subdata{'kind'},'tool'},@equal{@subdata{'sheetPosition'},'" + position + "'}}"), onTap="@dtActionSheet{" + sheet + "}")
+    x.append(xml("FastTextView", text="@subdata{'title'}", textSize="14np", maxLines="1", lineBreakMode="end",
+        textColor="@dtDarkModeAdapter{'#007FFF','#47A9FF'}"))
+    return n, x
 
 
 def process_panel(prefix, running):
-    outer, inside = collapse(prefix + "process", "processTitle", expanded=running)
+    outer, inside = material_disclosure(prefix, running)
     rows = node("Loop", prefix + "rows", {"listData": ref("processRows"), "direction": "vertical", "visible": visible()}, [])
     rx = xml("ListLayout", userId=rows["id"], listData=data("processRows"), orientation="vertical")
-    for kind in ("thought", "tool"):
-        panel, content = collapse(prefix + kind, "processRows[0].title", expanded=running and kind == "thought", loop=True, kind=kind)
-        if kind == "tool":
-            pane = wrap(prefix + "tool_result")
-            pane[0]["props"].update({"hasBackground": True, "backgroundType": "Standard", "standardBackgroundColor": "gray",
-                "hasBorder": True, "cornerRadius": 8})
-            pane[1].attrib.update({"backgroundColor": "@dtDarkModeAdapter{'#F2F3F3','#282B2E'}", "cornerRadius": "8np",
-                "borderWidth": "1np", "borderColor": "@dtDarkModeAdapter{'#D9DBDC','#484C50'}", "paddingTop": "6np", "paddingBottom": "6np"})
-            for field in ("toolName", "codeBody", "pageLabel", "resultStatus"):
-                if field == "codeBody":
-                    append(pane, markdown(prefix + "tool_body", "processRows[0].codeBody", loop=True))
-                else:
-                    n = node("BaseText", prefix + field, {"text": string("${processRows[0]." + field + "}"),
-                        "color": "gray", "gravity": "right" if field == "resultStatus" else "left", "visible": visible(), "marginLeft": 12, "marginRight": 12})
-                    x = xml("FastTextView", userId=n["id"], text="@subdata{'" + field + "'}", textSize="13np",
-                        textGravity="right" if field == "resultStatus" else "left", marginLeft="12np", marginRight="12np",
-                        marginTop="4np", marginBottom="4np", textColor="@dtDarkModeAdapter{'#707478','#B0B4BA'}")
-                    append(pane, (n, x))
-            copy = wrap(prefix + "copy_page")
-            copy[0]["props"].update({"actionType": "copy", "copyValue": string("${processRows[0].body}")})
-            copy[1].set("onTap", "@dtCopy{@toStr{@subdata{'body'}}}")
-            copy_label = node("BaseText", prefix + "copy_label", {"text": string("复制本页"), "color": "gray", "gravity": "right", "visible": visible()})
-            append(copy, (copy_label, xml("FastTextView", userId=copy_label["id"], text="复制本页", textGravity="right", textSize="12np",
-                paddingTop="8np", paddingBottom="8np", marginRight="12np", textColor="@dtDarkModeAdapter{'#707478','#B0B4BA'}")))
-            append(pane, copy)
-            append(pane, buttons(prefix + kind + "_pages", "processRows[0].navigation", loop=True))
-            append(content, pane)
-        else:
-            append(content, markdown(prefix + kind + "_body", "processRows[0].body", loop=True))
-            append(content, buttons(prefix + kind + "_pages", "processRows[0].navigation", loop=True))
-        append((rows, rx), panel)
+    c = cond("processRows[0].kind", "thought"); c["variableType"] = "loop"
+    thought = wrap(prefix + "thought", c)
+    append(thought, markdown(prefix + "thought_body", "processRows[0].body", loop=True))
+    append(thought, buttons(prefix + "thought_pages", "processRows[0].navigation", loop=True))
+    append((rows, rx), thought)
+    for position in ("single", "start", "middle", "end"):
+        append((rows, rx), tool_link(prefix + "tool_" + position, position))
     append(inside, (rows, rx))
     append(inside, buttons(prefix + "process_pages", "processNavigation"))
     return outer
 
 
 def build():
+    LOCAL.clear()
+    EXPRESSIONS.clear()
     root = node("AICardContainer", "root", {"enablePending": True, "enableWriting": True,
         "enableFailed": False, "enableDoing": False, "enableTitle": False, "enableFlowAbort": False,
         "summaryContent": ref("lastMessage"), "flowStatusVar": ref("flowStatus"),
@@ -225,9 +265,6 @@ def build():
             cx = xml(userId=content["id"], orientation="vertical")
             append(pair, (content, cx)); pair = (content, cx)
             append(pair, process_panel(prefix, phase == 2))
-            separator = node("Divider", prefix + "separator", {"visible": visible(), "marginTop": 8, "marginBottom": 8})
-            append(pair, (separator, xml("View", userId=separator["id"], height="0.5np", marginLeft="12np", marginRight="12np",
-                marginTop="8np", marginBottom="8np", backgroundColor="@dtDarkModeAdapter{'#E6E7E9','#3D4147'}")))
             append(pair, markdown(prefix + "answer", "content", streaming=phase == 2))
             approval = wrap(prefix + "approval", cond("hasApproval"))
             append(approval, label(prefix + "approval_title", "approvalTitle"))
@@ -248,7 +285,7 @@ def build():
         if name in LISTS:
             v["schema"] = [variable(name + "[0]." + k, private=name in PRIVATE) for k in BUTTON_KEYS]
         if name == "processRows":
-            v["schema"] = [variable("processRows[0]." + k, "markdown" if k in {"body", "codeBody"} else "string", private=True) for k in ("id", "kind", "title", "icon", "body", "codeBody", "toolName", "resultStatus", "pageLabel")]
+            v["schema"] = [variable("processRows[0]." + k, "markdown" if k in {"body", "codeBody"} else "string", private=True) for k in ("id", "kind", "title", "icon", "body", "codeBody", "toolName", "resultStatus", "pageLabel", "sheetTitle", "sheetBody", "sheetPosition", "turn_id", "previousPage", "nextPage")]
             nav = variable("processRows[0].navigation", "loopArray", private=True)
             nav["schema"] = [variable("processRows[0].navigation[0]." + k, private=True) for k in BUTTON_KEYS]
             v["schema"].append(nav)
@@ -260,7 +297,7 @@ def build():
         "mockData": {"cardData": {"flowStatus": 2, "status": "正在处理", "epoch": "active",
             "thought": "正在汇总本月销售数据，并比较各产品的销售表现。", "content": "本月销售额为 128 万元，较上月增长 12%。其中，产品甲的增长最明显。", "hasApproval": "no",
             "approvalTitle": "审批 · 执行数据分析", "approvalBody": "将运行销售分析脚本，读取本地销售数据并生成汇总报告。请确认是否允许执行。",
-            "turnId": "preview", "processTitle": "正在处理 · 11 秒", "processNavigation": [],
+            "turnId": "preview", "hasProcess": "yes", "processTitle": "正在处理 · 11 秒", "processNavigation": [],
             "processRows": [{"id": "reason1", "kind": "thought", "title": "思考过程", "body": "正在汇总本月销售数据，并比较各产品的销售表现。", "pageLabel": "", "navigation": []},
                 {"id": "tool1", "kind": "tool", "icon": "command", "title": "已运行 python 分析销售数据.py", "body": "python 分析销售数据.py\n\n已读取 1,280 条销售记录，汇总报告已生成。", "pageLabel": "", "navigation": []},
                 {"id": "tool2", "kind": "tool", "icon": "file", "title": "已读取 本月销售汇总.csv", "body": "本月销售汇总.csv\n\n已读取本月销售汇总。", "pageLabel": "", "navigation": []},
@@ -269,12 +306,12 @@ def build():
             "controls": []},
         "cardPrivateData": {"actionResult": "", "detailVisible": "no", "detailEpoch": "active",
             "detailTitle": "工具执行结果", "detailBody": "已读取 1,280 条销售记录，汇总报告已生成。", "detailButtons": []}, "localData": {}},
-        "customWidgetInfo": "", "useCustomWidgetInfo": False, "formList": [], "expList": [],
-        "localList": [], "hsfList": [], "lwpList": [], "extension": {"extendType": "AI", "aiStatusList": [1, 2, 3]}}
+        "customWidgetInfo": "", "useCustomWidgetInfo": False, "formList": [], "expList": EXPRESSIONS,
+        "localList": [{"id": key, "name": key, "type": kind, "private": False, "editorVarType": "localList"} for key, kind in LOCAL.items()], "hsfList": [], "lwpList": [], "extension": {"extendType": "AI", "aiStatusList": [1, 2, 3]}}
     ET.indent(native)
     editor["mockData"]["cardPrivateData"]["processRows"] = editor["mockData"]["cardData"].pop("processRows")
     for row in editor["mockData"]["cardPrivateData"]["processRows"]:
-        row.update({"codeBody": "```text\n" + row["body"] + "\n```", "toolName": {"tool1": "Shell", "tool2": "文件读取", "tool3": "客户信息服务"}.get(row["id"], ""),
+        row.update({"sheetTitle": "工具详情 · 第 1/1 页", "sheetBody": row["body"], "sheetPosition": "single", "turn_id": "preview", "previousPage": "0", "nextPage": "0", "codeBody": "```text\n" + row["body"] + "\n```", "toolName": {"tool1": "Shell", "tool2": "文件读取", "tool3": "客户信息服务"}.get(row["id"], ""),
             "resultStatus": "执行中" if row["id"] == "tool3" else "已完成"})
     return {"editorData": json.dumps(editor, ensure_ascii=False, separators=(",", ":")),
             "widgetInfo": ET.tostring(native, encoding="unicode"), "type": "im", "mode": "card"}
