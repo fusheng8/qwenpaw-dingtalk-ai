@@ -74,7 +74,7 @@ def test_native_fold_state_is_local_and_reset_at_completion():
         assert header["props"]["actionType"] == "setLocalState"
     native = ET.fromstring(card["widgetInfo"])
     local_actions = [x.get("onTap") for x in native.iter() if "'localData'" in x.get("onTap", "")]
-    assert len(local_actions) == 6
+    assert len(local_actions) == 2
     assert all("actionType" not in tap for tap in local_actions)
 
 
@@ -108,5 +108,39 @@ def test_loop_strings_use_editor_loop_scope_and_thought_is_direct_content():
     assert any(n["props"].get("text", {}).get("content") == "${loop.text}" for n in nodes)
     for phase in (2, 3):
         thought = next(n for n in nodes if n["id"] == f"qpai_p{phase}_thought")
-        assert [n["componentName"] for n in thought["children"]] == ["MarkdownBlock", "Loop"]
+        assert [n["componentName"] for n in thought["children"]] == ["BaseText", "Loop"]
         assert not any(n.get("props", {}).get("actionType") == "setLocalState" for n in walk(thought))
+
+
+def test_disclosure_insets_and_arrow_layout_match_editor_and_native():
+    card = json.loads((ROOT / "cards/dingtalk-ai-card.json").read_text())
+    editor = json.loads(card["editorData"])
+    def walk(n):
+        yield n
+        for child in n.get("children", []): yield from walk(child)
+    nodes = {n["id"]: n for n in walk(editor["schema"]["componentsTree"][0])}
+    xml = {x.get("userId"): x for x in ET.fromstring(card["widgetInfo"]).iter() if x.get("userId")}
+    for phase in (2,3):
+        key = f"qpai_p{phase}_node_ocmubggnywb9"
+        assert nodes[key]["props"]["margin"] == -2
+        assert nodes[key]["props"]["marginLeft"] == 12
+        assert xml[key].get("marginLeft") == "12np"
+        title, opened, closed = nodes[key]["children"]
+        assert title["props"]["enableColSpan"] is False
+        assert xml[title["id"]].get("width") == "match_content"
+        assert closed["children"][0]["props"]["icon"]["value"]["icon"] == "icon_XDS_rightarrow"
+        assert opened["children"][0]["props"]["icon"]["value"]["icon"] == "icon_XDS_downarrow"
+        assert all("onTap" not in xml[n["id"]].attrib for n in (opened, closed))
+
+
+def test_thinking_is_secondary_and_answer_retains_markdown():
+    card = json.loads((ROOT / "cards/dingtalk-ai-card.json").read_text())
+    root = ET.fromstring(card["widgetInfo"])
+    for phase in (2,3):
+        thought = next(x for x in root.iter() if x.get("userId") == f"qpai_p{phase}_thought_body")
+        assert thought.tag == "FastTextView" and thought.get("textSize") == "13np"
+        assert "#70757A" in thought.get("textColor")
+        answer = next(x for x in root.iter() if x.get("userId") == f"qpai_p{phase}_answer")
+        assert answer[0].tag == "DDRichTextView"
+        process = next(x for x in root.iter() if x.get("userId") == f"qpai_p{phase}_node_ocmubggnywbg")
+        assert any(x.get("userId") == f"qpai_p{phase}_process_divider" for x in process.iter())

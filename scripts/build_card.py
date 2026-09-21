@@ -98,6 +98,22 @@ def markdown(key, field, streaming=False, loop=False):
     return n, x
 
 
+def thinking_text(key):
+    # MarkdownBlock does not expose a reliable text-color override in the
+    # supplied editor schema. Use native text for secondary process content.
+    n = node("BaseText", key, {"text": string("${loop.body}"), "visible": visible(),
+        "styleType": "custom", "fontSizeType": "Custom", "customFontSize": 13,
+        "customFontLineHeight": 21, "fontColorType": "Custom", "bold": False,
+        "customLightColor": {"type": "dynamicColor", "valueType": "fixed", "value": "#70757A"},
+        "customDarkColor": {"type": "dynamicColor", "valueType": "fixed", "value": "#AEB4BC"},
+        "maxLine": {"type": "dynamicNumber", "valueType": "fixed", "value": 10000},
+        "margin": -2, "marginLeft": 12, "marginRight": 12, "marginTop": 6, "marginBottom": 6})
+    x = xml("FastTextView", userId=n["id"], text="@subdata{'body'}", textSize="13np", lineHeight="21np",
+        maxLines="10000", marginLeft="12np", marginRight="12np", marginTop="6np", marginBottom="6np",
+        textColor="@dtDarkModeAdapter{'#70757A','#AEB4BC'}")
+    return n, x
+
+
 def buttons(key, field, loop=False):
     child = node("SingleButton", key + "_button", {"text": string("${loop.text}"),
         "status": {"type": "dynamicSelect", "valueType": "fixed", "value": "normal"},
@@ -149,7 +165,6 @@ def material_disclosure(prefix, running):
             el.set(key, value.replace('expend6', local).replace('expendTitle6', 'processTitle'))
     header, body = n["children"]
     # Drop the sample content and put real reasoning and tool links here.
-    removed = {child["id"] for child in body.get("children", [])}
     body["children"] = []
     bx = next(el for el in x.iter() if el.get("userId") == body["id"])
     for el in list(bx): bx.remove(el)
@@ -159,8 +174,49 @@ def material_disclosure(prefix, running):
         header["props"][key] = action[key]
     header["props"]["enableClickEvent"] = True
     hx.set("onTap", next(el.get("onTap") for el in hx.iter() if el.get("onTap")))
-    for node in (n, header, body):
-        node["props"].update({"marginLeft": 0, "marginRight": 0, "marginTop": 2, "marginBottom": 2})
+    # Normalize BOTH the editor schema and native XML. Material margin presets
+    # otherwise override individual sides when DingTalk recompiles an import.
+    native_nodes = {el.get("userId"): el for el in x.iter() if el.get("userId")}
+    def spacing(node):
+        props = node["props"]
+        props.update(margin=-2, innerOffset=0)
+        el = native_nodes[node["id"]]
+        for side in ("Left", "Right", "Top", "Bottom"):
+            props["margin" + side] = 0
+            el.set("margin" + side, "0np")
+            if node["componentName"] == "Grid":
+                props["padding" + side] = {"type": "dynamicNumber", "valueType": "fixed", "value": 0}
+                el.set("padding" + side, "0np")
+        for child in node.get("children", []): spacing(child)
+    spacing(n)
+    for side, amount in (("Left", 12), ("Right", 12), ("Top", 8), ("Bottom", 4)):
+        header["props"]["margin" + side] = amount
+        hx.set("margin" + side, str(amount) + "np")
+    title_group, expanded_arrow, collapsed_arrow = header["children"]
+    title_group["props"].update(enableColSpan=False, colSpan=0, isAutoWidth=True)
+    title_x = native_nodes[title_group["id"]]
+    title_x.set("width", "match_content"); title_x.attrib.pop("weight", None)
+    title_node = title_group["children"][0]
+    title_node["props"].update(size="small", styleType="custom", fontSizeType="Custom", customFontSize=13,
+        customFontLineHeight=20, bold=False,
+        color={"type": "dynamicColor", "valueType": "fixed", "value": "common_level3_base_color"})
+    for el in native_nodes[title_node["id"]].iter():
+        if el.tag == "FastTextView":
+            el.set("textSize", "13np"); el.set("lineHeight", "20np")
+            el.set("textColor", "@dtDarkModeAdapter{'#74787E','#AEB4BC'}")
+    for arrow, symbol in ((expanded_arrow, "icon_XDS_downarrow"), (collapsed_arrow, "icon_XDS_rightarrow")):
+        arrow["props"]["marginLeft"] = 6
+        # The complete header handles the click; do not fire a second toggle.
+        arrow["props"].pop("actionType", None)
+        arrow["props"]["enableClickEvent"] = False
+        ax = native_nodes[arrow["id"]]; ax.set("marginLeft", "6np"); ax.attrib.pop("onTap", None)
+        icon = arrow["children"][0]
+        icon["props"]["icon"]["value"]["icon"] = symbol
+        icon["props"]["color"] = {"type": "dynamicColor", "valueType": "fixed", "value": "common_level3_base_color"}
+        for el in native_nodes[icon["id"]].iter():
+            if el.tag == "DDIconView":
+                el.set("text", "::" + symbol + "::"); el.set("textSize", "12np")
+                el.set("textColor", "@dtDarkModeAdapter{'#74787E','#AEB4BC'}")
     # Separate phase keys ensure completion starts collapsed.
     def visibility(node):
         conditions = node["props"].get("visible", {}).get("condition", {}).get("conditions", [])
@@ -232,13 +288,17 @@ def process_panel(prefix, running):
     rx = xml("ListLayout", userId=rows["id"], listData=data("processRows"), orientation="vertical")
     c = cond("processRows[0].kind", "thought"); c["variableType"] = "loop"
     thought = wrap(prefix + "thought", c)
-    append(thought, markdown(prefix + "thought_body", "processRows[0].body", loop=True))
+    append(thought, thinking_text(prefix + "thought_body"))
     append(thought, buttons(prefix + "thought_pages", "processRows[0].navigation", loop=True))
     append((rows, rx), thought)
     for position in ("single", "start", "middle", "end"):
         append((rows, rx), tool_link(prefix + "tool_" + position, position))
     append(inside, (rows, rx))
     append(inside, buttons(prefix + "process_pages", "processNavigation"))
+    divider = node("Divider", prefix + "process_divider", {"visible": visible(), "margin": -2,
+        "marginLeft": 12, "marginRight": 12, "marginTop": 10, "marginBottom": 8})
+    append(inside, (divider, xml("View", userId=divider["id"], height="0.5np", marginLeft="12np", marginRight="12np",
+        marginTop="10np", marginBottom="8np", backgroundColor="@dtDarkModeAdapter{'#E6E7E9','#3D4147'}")))
     return outer
 
 
