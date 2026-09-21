@@ -120,5 +120,114 @@
             h(Alert, {type: "info", showIcon: true, message: "机器人需开启 Stream 模式并具备互动卡片权限。同一应用请只保留一个 Stream 接收服务。", style: {marginBottom: 20}}),
             h(Button, {type: "primary", htmlType: "submit", loading: saving, disabled: busy}, "保存配置")))));
   }
+  // QwenPaw 2.2.x exposes no channel-form slot. Attach only to this plugin's
+  // visible drawer and use standard input events so AntD owns saved values.
+  function installDrawerQR() {
+    const marker = "钉钉 AI · 单卡对话：";
+    const mounts = new Map();
+    let stopped = false;
+    function mount(form, input, secret) {
+      const box = document.createElement("section");
+      box.dataset.qpaiQr = "true";
+      box.setAttribute("aria-label", "钉钉扫码授权");
+      box.style.cssText = "margin:16px 0 24px;";
+      const title = document.createElement("div");
+      title.textContent = "钉钉扫码授权";
+      title.style.cssText = "font-weight:600;margin-bottom:12px;";
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "获取二维码";
+      button.style.cssText = "padding:7px 15px;border:1px solid #d9d9d9;border-radius:6px;background:transparent;color:inherit;cursor:pointer;font:inherit;";
+      const image = document.createElement("img");
+      image.alt = "请使用钉钉扫码授权机器人";
+      image.width = image.height = 200;
+      image.hidden = true;
+      image.style.cssText = "display:none;background:white;padding:8px;margin-top:16px;max-width:100%;";
+      const hint = document.createElement("p");
+      hint.textContent = "与官方钉钉渠道使用相同扫码流程，授权成功后自动填入下方凭据。";
+      hint.setAttribute("role", "status");
+      hint.style.cssText = "font-size:13px;line-height:1.6;margin:12px 0 0;";
+      box.append(title, button, image, hint);
+      const field = input.closest('[class*="-form-item"]');
+      (field || input).before(box);
+      let generation = 0, timer, dead = false;
+      const valid = id => !dead && generation === id && form.isConnected && input.isConnected && secret.isConnected
+        && !!form.closest('[role="dialog"]') && form.textContent.includes(marker);
+      function hideImage() { image.hidden = true; image.style.display = "none"; image.removeAttribute("src"); }
+      function fill(element, value) {
+        // Native setter + bubbling input is consumed by React/AntD onChange.
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+        setter.call(element, value);
+        element.dispatchEvent(new Event("input", {bubbles: true}));
+        element.dispatchEvent(new Event("change", {bubbles: true}));
+      }
+      button.onclick = async () => {
+        const id = ++generation;
+        clearTimeout(timer); hideImage(); button.disabled = true;
+        hint.textContent = "正在获取二维码…";
+        try {
+          const data = await api("/config/channels/dingtalk/qrcode");
+          if (!valid(id)) return;
+          if (!data.qrcode_img || !data.poll_token) throw new Error("官方接口未返回完整二维码信息，请重试。");
+          const raw = data.qrcode_img;
+          image.src = raw.startsWith("data:image/") ? raw : "data:image/png;base64," + raw;
+          image.hidden = false; image.style.display = "block";
+          button.textContent = "刷新二维码";
+          hint.textContent = "请使用钉钉扫码，按官方页面完成机器人选择或创建及授权。";
+          const deadline = Date.now() + 5 * 60 * 1000;
+          let failures = 0;
+          async function poll() {
+            if (!valid(id)) return;
+            if (Date.now() >= deadline) { hideImage(); hint.textContent = "二维码已过期，请刷新二维码。"; return; }
+            try {
+              const result = await api("/config/channels/dingtalk/qrcode/status?token=" + encodeURIComponent(data.poll_token));
+              if (!valid(id)) return;
+              failures = 0;
+              if (result.status === "success") {
+                const credentials = result.credentials || {};
+                if (!credentials.client_id || !credentials.client_secret) {
+                  hideImage(); hint.textContent = "授权未返回完整凭据，请刷新二维码重试。"; return;
+                }
+                fill(input, credentials.client_id); fill(secret, credentials.client_secret);
+                hideImage(); hint.textContent = "扫码授权成功，已填入凭据。请填写卡片模板 ID，再点击当前窗口的保存。";
+                return;
+              }
+              if (["expired", "fail", "failed"].includes(result.status)) {
+                hideImage(); hint.textContent = result.status === "expired" ? "二维码已过期，请刷新二维码。" : "扫码授权失败，请刷新二维码重试。"; return;
+              }
+            } catch (_) {
+              if (!valid(id)) return;
+              if (++failures >= 3) { hideImage(); hint.textContent = "获取授权状态失败，请检查网络后刷新二维码。"; return; }
+            }
+            timer = setTimeout(poll, 5000);
+          }
+          timer = setTimeout(poll, 5000);
+        } catch (error) { if (valid(id)) hint.textContent = error.message; }
+        finally { if (valid(id)) button.disabled = false; }
+      };
+      return () => { dead = true; generation++; clearTimeout(timer); hideImage(); button.onclick = null; box.remove(); };
+    }
+    function scan() {
+      if (stopped) return;
+      for (const [form, cleanup] of mounts) {
+        if (!form.isConnected || !form.closest('[role="dialog"]') || !form.textContent.includes(marker)) { cleanup(); mounts.delete(form); }
+      }
+      for (const form of document.querySelectorAll('[role="dialog"] form')) {
+        if (mounts.has(form) || !form.textContent.includes(marker)) continue;
+        const input = form.querySelector('input[id="client_id"], input[id$="_client_id"]');
+        const secret = form.querySelector('input[id="client_secret"], input[id$="_client_secret"]');
+        if (input && secret && form.querySelector('input[id="card_template_id"], input[id$="_card_template_id"]')) {
+          mounts.set(form, mount(form, input, secret));
+        }
+      }
+    }
+    const observer = new MutationObserver(scan);
+    observer.observe(document.body, {childList: true, subtree: true});
+    scan();
+    return () => { stopped = true; observer.disconnect(); for (const cleanup of mounts.values()) cleanup(); mounts.clear(); };
+  }
+  if (window.__qpaiDrawerCleanup) window.__qpaiDrawerCleanup();
+  window.__qpaiDrawerCleanup = installDrawerQR();
+
   paw.registerRoutes("dingtalk-ai", [{path: "/dingtalk-ai", label: "钉钉 AI", component: Settings, priority: 30}]);
 })();

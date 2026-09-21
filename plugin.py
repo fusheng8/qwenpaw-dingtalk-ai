@@ -5,7 +5,7 @@ from .routes import router
 class DingTalkAIPlugin:
     def register(self, api):
         api.register_channel(DingTalkAIChannel, label="钉钉 AI · 单卡对话",
-            description="单卡流式对话与工具审批；扫码配置请打开侧栏「钉钉 AI」。",
+            description="钉钉 AI · 单卡对话：支持官方扫码授权、流式思考与工具审批。",
             doc_url="https://github.com/fusheng8/qwenpaw-dingtalk-ai#readme",
             config_fields=[
                 {"name": "client_id", "label": "Client ID / AppKey", "type": "text", "required": True},

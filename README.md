@@ -9,16 +9,16 @@
 在运行千问派的机器上执行：
 
 ```sh
-qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.3/dingtalk-ai-1.0.3.zip
+qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.4/dingtalk-ai-1.0.4.zip
 ```
 
 千问派已运行时，官方 CLI 会尝试热安装；未运行时，下次启动生效。安装后刷新控制台，在侧栏打开 **钉钉 AI**。升级同版本可在命令末尾加 `--force`。
 
 ## AI 卡片导入与配置
 
-1. [下载卡片导入文件](https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.3/dingtalk-ai-card.json)，也可在插件设置页点击「下载 AI 卡片模板」。
+1. [下载卡片导入文件](https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.4/dingtalk-ai-card.json)，也可在插件设置页点击「下载 AI 卡片模板」。
 2. 在 [钉钉卡片平台](https://card.dingtalk.com/) 新建 **AI 卡片**，通过模板编辑器的 JSON 导入功能选择该文件，保存并发布。复制完整模板 ID。
-3. 千问派侧栏「钉钉 AI」→「扫码填入凭据」，用钉钉完成授权。也可以手动填写已有企业内部应用的 Client ID、Client Secret。
+3. 千问派「渠道」→「钉钉 AI · 单卡对话」→ Client ID 上方的「获取二维码」，用钉钉按官方流程选择或创建机器人并完成授权。凭据自动填入当前表单，填写模板 ID 后点击保存。侧栏「钉钉 AI」的独立设置页也保留扫码入口。也可以手动填写已有企业内部应用的 Client ID、Client Secret。
 4. 填写刚发布的卡片模板 ID，启用渠道，保存。Robot Code 通常留空即可。
 5. 应用应有机器人能力、接收模式为 **Stream**，开通互动卡片实例创建、投放、更新和流式更新接口需要的权限，并发布到测试用户可访问的范围。权限申请和组织管理员审批不能由插件代替。
 6. 若与官方钉钉渠道使用同一应用，勾选停用官方渠道。不要同时运行多个使用相同 Client ID 的 Stream 接收服务，否则消息或按钮回调可能被其他实例消费。
@@ -27,10 +27,12 @@ qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/
 
 ### 从旧版升级
 
+1.0.4 在千问派通用渠道配置窗口的 Client ID 上方增加「获取二维码」，复用官方钉钉扫码接口，授权凭据自动写入当前表单。仅升级插件并刷新控制台即可，卡片模板与 1.0.3 相同，无需重新导入。
+
 1.0.3 将所有外部工具、服务、命令及文件操作统一为思考过程区内的灰色单行活动摘要，显示图标、中文状态和操作目标，过长省略。展开后显示浅灰圆角结果框、工具名称、代码格式的完整参数和结果、执行状态及本页复制。顶部显示处理时长，思考实时展开，点击工具命令行直接展开结果，完成后过程自动收起。保留 1.0.1 的按钮成功判定修复和中文示例。请同时升级插件并重新导入、发布新模板。可以在原模板中导入后重新发布以保留模板 ID；若新建模板，则需要在插件配置中更新 ID。
 
 ```sh
-qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.3/dingtalk-ai-1.0.3.zip --force
+qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.4/dingtalk-ai-1.0.4.zip --force
 ```
 
 ## 交互行为
@@ -75,3 +77,14 @@ python scripts/package.py
 - [钉钉官方卡片示例](https://github.com/open-dingtalk/dingtalk-card-examples)
 
 模板按公开组件协议独立生成，包含配套编辑器结构与原生 widget XML，不依赖第三方商业模板。
+
+### 渠道表单扫码的兼容说明
+
+QwenPaw 2.2.1 的自定义渠道字段只支持基础输入控件，没有扫码控件扩展点。插件前端仅在带有本插件描述、Client ID、Client Secret 和卡片模板字段的渠道弹窗内挂载扫码区域，通过标准输入事件同步 React/AntD 表单；不修改千问派安装文件，也不把凭据写入浏览器存储。关闭窗口后停止轮询，旧授权响应不会回填到新窗口。宿主升级改变表单结构时需要重新验证；侧栏设置页继续作为独立入口。
+
+新增 6 项前端行为检查，使用真实 React 18 / AntD 5.29.3 表单和模拟的官方授权接口，覆盖凭据填写与提交、其他渠道隔离、过期提示、关闭重开隔离、不完整凭据和重复加载。并非真实钉钉扫码验收。
+
+```sh
+npm install --prefix /tmp/qpai-frontend-check react@18.3.1 react-dom@18.3.1 antd@5.29.3 jsdom@26.1.0
+QPAI_UI_MODULES=/tmp/qpai-frontend-check/node_modules node tests/drawer-qr.cjs
+```
