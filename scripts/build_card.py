@@ -101,14 +101,14 @@ def markdown(key, field, streaming=False, loop=False):
 def thinking_text(key):
     # MarkdownBlock does not expose a reliable text-color override in the
     # supplied editor schema. Use native text for secondary process content.
-    n = node("BaseText", key, {"text": string("${loop.body}"), "visible": visible(),
+    n = node("BaseText", key, {"text": string("${loop.thoughtText}"), "visible": visible(),
         "styleType": "custom", "fontSizeType": "Custom", "customFontSize": 13,
         "customFontLineHeight": 21, "fontColorType": "Custom", "bold": False,
         "customLightColor": {"type": "dynamicColor", "valueType": "fixed", "value": "#70757A"},
         "customDarkColor": {"type": "dynamicColor", "valueType": "fixed", "value": "#AEB4BC"},
         "maxLine": {"type": "dynamicNumber", "valueType": "fixed", "value": 10000},
         "margin": -2, "marginLeft": 12, "marginRight": 12, "marginTop": 6, "marginBottom": 6})
-    x = xml("FastTextView", userId=n["id"], text="@subdata{'body'}", textSize="13np", lineHeight="21np",
+    x = xml("FastTextView", userId=n["id"], text="@subdata{'thoughtText'}", textSize="13np", lineHeight="21np",
         maxLines="10000", marginLeft="12np", marginRight="12np", marginTop="6np", marginBottom="6np",
         textColor="@dtDarkModeAdapter{'#70757A','#AEB4BC'}")
     return n, x
@@ -345,7 +345,7 @@ def build():
         if name in LISTS:
             v["schema"] = [variable(name + "[0]." + k, private=name in PRIVATE) for k in BUTTON_KEYS]
         if name == "processRows":
-            v["schema"] = [variable("processRows[0]." + k, "markdown" if k in {"body", "codeBody"} else "string", private=True) for k in ("id", "kind", "title", "icon", "body", "codeBody", "toolName", "resultStatus", "pageLabel", "sheetTitle", "sheetBody", "sheetPosition", "turn_id", "previousPage", "nextPage")]
+            v["schema"] = [variable("processRows[0]." + k, "markdown" if k in {"body", "codeBody"} else "string", private=True) for k in ("id", "kind", "title", "icon", "body", "thoughtText", "codeBody", "toolName", "resultStatus", "pageLabel", "sheetTitle", "sheetBody", "sheetPosition", "turn_id", "previousPage", "nextPage")]
             nav = variable("processRows[0].navigation", "loopArray", private=True)
             nav["schema"] = [variable("processRows[0].navigation[0]." + k, private=True) for k in BUTTON_KEYS]
             v["schema"].append(nav)
@@ -371,6 +371,7 @@ def build():
     ET.indent(native)
     editor["mockData"]["cardPrivateData"]["processRows"] = editor["mockData"]["cardData"].pop("processRows")
     for row in editor["mockData"]["cardPrivateData"]["processRows"]:
+        row["thoughtText"] = row["body"] if row["kind"] == "thought" else ""
         row.update({"sheetTitle": "工具详情 · 第 1/1 页", "sheetBody": row["body"], "sheetPosition": "single", "turn_id": "preview", "previousPage": "0", "nextPage": "0", "codeBody": "```text\n" + row["body"] + "\n```", "toolName": {"tool1": "Shell", "tool2": "文件读取", "tool3": "客户信息服务"}.get(row["id"], ""),
             "resultStatus": "执行中" if row["id"] == "tool3" else "已完成"})
     return {"editorData": json.dumps(editor, ensure_ascii=False, separators=(",", ":")),

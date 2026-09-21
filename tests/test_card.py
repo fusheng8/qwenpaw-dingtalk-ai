@@ -144,3 +144,28 @@ def test_thinking_is_secondary_and_answer_retains_markdown():
         assert answer[0].tag == "DDRichTextView"
         process = next(x for x in root.iter() if x.get("userId") == f"qpai_p{phase}_node_ocmubggnywbg")
         assert any(x.get("userId") == f"qpai_p{phase}_process_divider" for x in process.iter())
+
+
+def test_thought_text_binds_a_string_not_a_markdown_variable():
+    from qpai.state import Turn, project, pages
+    card = json.loads((ROOT / 'cards/dingtalk-ai-card.json').read_text())
+    editor = json.loads(card['editorData'])
+    rows = next(v for v in editor['variableList'] if v['name'] == 'processRows')
+    field = next(v for v in rows['schema'] if v['name'] == 'thoughtText')
+    assert field['type'] == 'string' and field['private'] is True
+    native = ET.fromstring(card['widgetInfo'])
+    for phase in (2, 3):
+        view = next(x for x in native.iter() if x.get('userId') == f'qpai_p{phase}_thought_body')
+        assert view.get('text') == "@subdata{'thoughtText'}"
+    turn = Turn('t', 's', 'u', 'staff', 'c')
+    original = '思考内容\n**格式标记**\n' * 300
+    turn.step('r', 'reasoning', '思考过程').content = original
+    result = []
+    for i in range(len(pages(original))):
+        turn.view_pages['r'] = i
+        row = json.loads(project(turn)['processRows'])[0]
+        assert row['thoughtText'] == row['body']
+        result.append(row['thoughtText'])
+    assert ''.join(result) == original
+    turn.status = 'completed'
+    assert json.loads(project(turn)['processRows'])[0]['thoughtText']

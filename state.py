@@ -216,6 +216,7 @@ def project(turn: Turn, *, page_bytes: int = 1800) -> dict[str, str]:
         fence = "`" * max(3, 1 + max((len(m[0]) for m in re.finditer(r"`+", raw)), default=0))
         rows.append({"id": step.id, "kind": "thought" if is_thought else "tool",
             "title": title, "icon": icon, "body": raw,
+            "thoughtText": raw if is_thought else "",
             "sheetTitle": f"{step.name or step.title or '工具详情'} · 第 {page + 1}/{len(chunks)} 页",
             "sheetBody": STATUS_LABELS.get(step.status, "执行中") + "\n\n" + raw,
             "sheetPosition": "single" if len(chunks) == 1 else "start" if page == 0 else "end" if page == len(chunks) - 1 else "middle",
