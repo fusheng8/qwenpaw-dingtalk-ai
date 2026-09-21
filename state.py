@@ -14,6 +14,9 @@ from pathlib import Path
 from typing import Any
 
 TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
+STATUS_LABELS = {"running": "执行中", "completed": "已完成", "failed": "执行失败",
+                 "cancelled": "已停止", "interrupted": "已中断", "pending": "待审批",
+                 "approved": "已批准", "denied": "已拒绝", "expired": "已过期"}
 
 
 def text(value: Any) -> str:
@@ -187,7 +190,7 @@ def detail(turn: Turn, action: str, page: int = 0, step_id: str = "", page_bytes
     if action == "history":
         chunks = [turn.steps[i:i + 6] for i in range(0, len(turn.steps), 6)] or [[]]
         page = max(0, min(page, len(chunks) - 1))
-        body = "\n\n".join(f"**{s.title[:200]}** · {s.status}" for s in chunks[page]) or "暂无执行过程"
+        body = "\n\n".join(f"**{s.title[:200]}** · {STATUS_LABELS.get(s.status, '处理中')}" for s in chunks[page]) or "暂无执行过程"
         controls = [button(s.title[:45] or "查看详情", "step", turn, step_id=s.id, page=0) for s in chunks[page]]
         title = f"执行过程 · {page + 1}/{len(chunks)}"
     else:

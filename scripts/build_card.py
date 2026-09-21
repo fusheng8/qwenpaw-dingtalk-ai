@@ -8,7 +8,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
-PRIVATE = {"detailTitle", "detailBody", "detailButtons", "detailVisible", "detailEpoch"}
+PRIVATE = {"detailTitle", "detailBody", "detailButtons", "detailVisible", "detailEpoch", "actionResult"}
 MARKDOWN = {"content", "thought", "approvalBody", "detailBody"}
 LISTS = {"controls", "toolButtons", "approvalButtons", "detailButtons"}
 BUTTON_KEYS = ("text", "action", "turn_id", "step_id", "approval_id", "page")
@@ -102,7 +102,8 @@ def buttons(key, field):
         "params": [{"id": str(i), "name": k, "type": "variable", "variable": field + "[0]." + k,
                     "variableType": "loop", "value": ""} for i, k in enumerate(BUTTON_KEYS[1:])],
         "visible": visible(), "marginLeft": 12, "marginRight": 12, "marginTop": 4, "marginBottom": 4,
-        "successToast": string(""), "failureToast": string("操作失败，请重试"), "disabledWhileForward": True})
+        "successCondition": {"op": "and", "conditions": [cond("actionResult", "ok")]},
+        "successToast": string(""), "failureToast": string("操作未完成，请查看卡片中的提示"), "disabledWhileForward": True})
     n = node("Loop", key, {"listData": ref(field), "direction": "vertical", "visible": visible(),
                            "childGap": True, "childGapSize": 4, "scrollable": False}, [child])
     x = xml("ListLayout", userId=n["id"], listData=data(field), orientation="vertical")
@@ -170,9 +171,13 @@ def build():
             "main": "./src/index.tsx", "destructuring": False, "subName": "", "componentName": name} for name in sorted(components)],
         "componentsTree": [root], "i18n": {}}, "variableList": variables,
         "mockData": {"cardData": {"flowStatus": 2, "status": "正在处理", "epoch": "active",
-            "thought": "正在分析你的问题…", "content": "", "hasApproval": "no",
-            "toolButtons": [{"text": "python analyse.py", "action": "step", "turn_id": "preview", "step_id": "tool1", "page": "0", "approval_id": ""}],
-            "controls": []}, "cardPrivateData": {}, "localData": {}},
+            "thought": "正在汇总本月销售数据，并比较各产品的销售表现。", "content": "本月销售额为 128 万元，较上月增长 12%。其中，产品甲的增长最明显。", "hasApproval": "no",
+            "approvalTitle": "审批 · 执行数据分析", "approvalBody": "将运行销售分析脚本，读取本地销售数据并生成汇总报告。请确认是否允许执行。",
+            "toolButtons": [{"text": "python 分析销售数据.py", "action": "step", "turn_id": "preview", "step_id": "tool1", "page": "0", "approval_id": ""}],
+            "approvalButtons": [{"text": label, "action": action, "turn_id": "preview", "step_id": "", "page": "0", "approval_id": "preview-approval"} for label, action in [("批准本次", "approve"), ("拒绝", "deny")]],
+            "controls": [{"text": "查看过程 · 2 项", "action": "history", "turn_id": "preview", "step_id": "", "page": "0", "approval_id": ""}]},
+        "cardPrivateData": {"actionResult": "", "detailVisible": "no", "detailEpoch": "active",
+            "detailTitle": "工具执行结果", "detailBody": "已读取 1,280 条销售记录，汇总报告已生成。", "detailButtons": []}, "localData": {}},
         "customWidgetInfo": "", "useCustomWidgetInfo": False, "formList": [], "expList": [],
         "localList": [], "hsfList": [], "lwpList": [], "extension": {"extendType": "AI", "aiStatusList": [1, 2, 3]}}
     ET.indent(native)

@@ -61,9 +61,13 @@ async def test_callbacks_reject_other_users_and_wrong_turn(channel):
     event = callback(turn, "history"); event["userId"] = "someone-else"
     result = await channel.card_callback(event)
     assert "只有发起" in result["userPrivateData"]["cardParamMap"]["detailBody"]
+    assert result["userPrivateData"]["cardParamMap"]["actionResult"] == "error"
     event = callback(turn, "approve", approval_id="unknown")
     result = await channel.card_callback(event)
     assert "已过期" in result["userPrivateData"]["cardParamMap"]["detailBody"]
+    assert result["userPrivateData"]["cardParamMap"]["actionResult"] == "error"
+    success = await channel.card_callback(callback(turn, "close"))
+    assert success["userPrivateData"]["cardParamMap"]["actionResult"] == "ok"
 
 
 @pytest.mark.asyncio

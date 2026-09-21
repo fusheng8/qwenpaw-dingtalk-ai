@@ -9,14 +9,14 @@
 在运行千问派的机器上执行：
 
 ```sh
-qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.0/dingtalk-ai-1.0.0.zip
+qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.1/dingtalk-ai-1.0.1.zip
 ```
 
 千问派已运行时，官方 CLI 会尝试热安装；未运行时，下次启动生效。安装后刷新控制台，在侧栏打开 **钉钉 AI**。升级同版本可在命令末尾加 `--force`。
 
 ## AI 卡片导入与配置
 
-1. [下载卡片导入文件](https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.0/dingtalk-ai-card.json)，也可在插件设置页点击「下载 AI 卡片模板」。
+1. [下载卡片导入文件](https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.1/dingtalk-ai-card.json)，也可在插件设置页点击「下载 AI 卡片模板」。
 2. 在 [钉钉卡片平台](https://card.dingtalk.com/) 新建 **AI 卡片**，通过模板编辑器的 JSON 导入功能选择该文件，保存并发布。复制完整模板 ID。
 3. 千问派侧栏「钉钉 AI」→「扫码填入凭据」，用钉钉完成授权。也可以手动填写已有企业内部应用的 Client ID、Client Secret。
 4. 填写刚发布的卡片模板 ID，启用渠道，保存。Robot Code 通常留空即可。
@@ -24,6 +24,14 @@ qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/
 6. 若与官方钉钉渠道使用同一应用，勾选停用官方渠道。不要同时运行多个使用相同 Client ID 的 Stream 接收服务，否则消息或按钮回调可能被其他实例消费。
 
 扫码复用千问派官方的 `/api/config/channels/dingtalk/qrcode` 和状态接口。扫码只自动填写应用凭据，**不会自动生成卡片模板 ID，也不代表应用权限已经获批**。
+
+### 从 1.0.0 升级
+
+1.0.1 补齐全部 7 个回传请求按钮的「请求成功判定条件」，通过当前点击用户的私有变量 `actionResult` 区分成功和失败；示例文案及过程状态改为中文。请同时升级插件并重新导入、发布新模板。可以在原模板中导入后重新发布以保留模板 ID；若新建模板，则需要在插件配置中更新 ID。
+
+```sh
+qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.1/dingtalk-ai-1.0.1.zip --force
+```
 
 ## 交互行为
 

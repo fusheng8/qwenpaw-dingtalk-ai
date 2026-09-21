@@ -37,7 +37,7 @@ class CardCallback(dingtalk_stream.CallbackHandler):
         try:
             response = await asyncio.wait_for(asyncio.wrap_future(future), timeout=1.7)
         except Exception:
-            response = self.channel.callback_response(private={"detailVisible": "yes",
+            response = self.channel.callback_response(success=False, private={"detailVisible": "yes",
                 "detailTitle": "操作未完成", "detailBody": "请稍后重试；审批状态以最新卡片为准。"})
         return dingtalk_stream.AckMessage.STATUS_OK, response
 
@@ -358,12 +358,12 @@ class DingTalkAIChannel(DingTalkChannel):
             task.add_done_callback(self.watchers.discard)
 
     @staticmethod
-    def callback_response(public=None, private=None):
+    def callback_response(public=None, private=None, *, success=True):
         result = {"cardUpdateOptions": {"updateCardDataByKey": True, "updatePrivateDataByKey": True}}
         if public is not None:
             result["cardData"] = {"cardParamMap": public}
-        if private is not None:
-            result["userPrivateData"] = {"cardParamMap": private}
+        result["userPrivateData"] = {"cardParamMap": {
+            **(private or {}), "actionResult": "ok" if success else "error"}}
         return result
 
     async def card_callback(self, payload):
@@ -409,7 +409,7 @@ class DingTalkAIChannel(DingTalkChannel):
             return self.callback_response(private=detail(turn, action, int(params.get("page", 0)),
                 str(params.get("step_id", "")), self.page_bytes))
         except (ValueError, TypeError, KeyError) as exc:
-            return self.callback_response(private={"detailVisible": "yes", "detailTitle": "无法操作",
+            return self.callback_response(success=False, private={"detailVisible": "yes", "detailTitle": "无法操作",
                 "detailBody": str(exc), "detailButtons": "[]", "detailEpoch": "done" if turn and turn.status in TERMINAL else "active"})
 
     def _run_stream_forever(self):
