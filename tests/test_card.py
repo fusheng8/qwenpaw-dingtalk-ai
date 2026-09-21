@@ -70,3 +70,17 @@ def test_native_fold_state_is_local_and_reset_at_completion():
     for panel in panels:
         tap = panel[0].get("onTap")
         assert "localData" in tap and "actionType" not in tap
+
+
+def test_activity_details_stay_inside_process_and_use_code_panels():
+    card = json.loads((ROOT / "cards/dingtalk-ai-card.json").read_text())
+    root = ET.fromstring(card["widgetInfo"])
+    for phase in (2, 3):
+        process = next(x for x in root.iter() if x.get("userId") == f"qpai_p{phase}_process")
+        tool = next(x for x in process.iter() if x.get("userId") == f"qpai_p{phase}_tool")
+        assert tool[0][-1].get("maxLines") == "1"
+        pane = next(x for x in tool.iter() if x.get("userId") == f"qpai_p{phase}_tool_result")
+        assert pane.get("cornerRadius") == "8np" and pane.get("borderWidth") == "1np"
+        assert any(x.get("attributedText") == "@subdata{'codeBody'}" for x in pane.iter())
+        assert any("dtCopy" in x.get("onTap", "") for x in pane.iter())
+        assert any(x.get("text") == "@subdata{'resultStatus'}" for x in pane.iter())

@@ -141,10 +141,23 @@ def collapse(key, title, expanded=False, loop=False, kind=None):
         x.set("visibility", show("@equal{@subdata{'kind'},'" + kind + "'}"))
     header = xml(orientation="horizontal", childGravity="leftCenter", paddingTop="8np", paddingBottom="8np",
         onTap="@dtSendOutData{@dtMapAppend{null,'localData',@dtMapAppend{@data{data.localData}," + local_key + ",@triple{" + state + ",0,1}}}}")
-    header.append(xml("DDIconView", width="match_content", text="@triple{" + opened + ",'::icon_XDS_downarrow::','::icon_XDS_rightarrow::'}",
-        textSize="13np", marginRight="6np", textColor="@dtDarkModeAdapter{'#8A8D91','#A0A4AA'}"))
+    if kind == "tool":
+        # Small native outline glyphs, with no external image dependency.
+        glyph = xml(orientation="horizontal", width="20np", height="20np", marginRight="8np", childGravity="center")
+        terminal = xml("FastTextView", width="16np", height="16np", text=">_", textSize="10np", textGravity="center",
+            cornerRadius="3np", borderWidth="1np", borderColor="@dtDarkModeAdapter{'#787B80','#B0B4BA'}",
+            textColor="@dtDarkModeAdapter{'#787B80','#B0B4BA'}",
+            visibility=show("@not{@or{@equal{@subdata{'icon'},'edit'},@equal{@subdata{'icon'},'file'}}}"))
+        glyph.append(terminal)
+        for icon, symbol in (("edit", "::icon_compile::"), ("file", "::icon_sharefile::")):
+            glyph.append(xml("DDIconView", width="18np", height="18np", text=symbol, textSize="16np",
+                textColor="@dtDarkModeAdapter{'#787B80','#B0B4BA'}", visibility=show("@equal{@subdata{'icon'},'" + icon + "'}")))
+        header.append(glyph)
+    else:
+        header.append(xml("DDIconView", width="match_content", text="@triple{" + opened + ",'::icon_XDS_downarrow::','::icon_XDS_rightarrow::'}",
+            textSize="13np", marginRight="6np", textColor="@dtDarkModeAdapter{'#8A8D91','#A0A4AA'}"))
     header.append(xml("FastTextView", text="@subdata{'title'}" if loop else data(title), textSize="14np",
-        maxLines="2", lineBreakMode="end", textColor="@dtDarkModeAdapter{'#787B80','#B0B4BA'}"))
+        maxLines="1" if kind == "tool" else "2", lineBreakMode="end", textColor="@dtDarkModeAdapter{'#787B80','#B0B4BA'}"))
     x.append(header)
     body = xml(orientation="vertical", visibility=show(opened))
     x.append(body)
@@ -157,8 +170,34 @@ def process_panel(prefix, running):
     rx = xml("ListLayout", userId=rows["id"], listData=data("processRows"), orientation="vertical")
     for kind in ("thought", "tool"):
         panel, content = collapse(prefix + kind, "processRows[0].title", expanded=running and kind == "thought", loop=True, kind=kind)
-        append(content, markdown(prefix + kind + "_body", "processRows[0].body", loop=True))
-        append(content, buttons(prefix + kind + "_pages", "processRows[0].navigation", loop=True))
+        if kind == "tool":
+            pane = wrap(prefix + "tool_result")
+            pane[0]["props"].update({"hasBackground": True, "backgroundType": "Standard", "standardBackgroundColor": "gray",
+                "hasBorder": True, "cornerRadius": 8})
+            pane[1].attrib.update({"backgroundColor": "@dtDarkModeAdapter{'#F2F3F3','#282B2E'}", "cornerRadius": "8np",
+                "borderWidth": "1np", "borderColor": "@dtDarkModeAdapter{'#D9DBDC','#484C50'}", "paddingTop": "6np", "paddingBottom": "6np"})
+            for field in ("toolName", "codeBody", "pageLabel", "resultStatus"):
+                if field == "codeBody":
+                    append(pane, markdown(prefix + "tool_body", "processRows[0].codeBody", loop=True))
+                else:
+                    n = node("BaseText", prefix + field, {"text": string("${processRows[0]." + field + "}"),
+                        "color": "gray", "gravity": "right" if field == "resultStatus" else "left", "visible": visible(), "marginLeft": 12, "marginRight": 12})
+                    x = xml("FastTextView", userId=n["id"], text="@subdata{'" + field + "'}", textSize="13np",
+                        textGravity="right" if field == "resultStatus" else "left", marginLeft="12np", marginRight="12np",
+                        marginTop="4np", marginBottom="4np", textColor="@dtDarkModeAdapter{'#707478','#B0B4BA'}")
+                    append(pane, (n, x))
+            copy = wrap(prefix + "copy_page")
+            copy[0]["props"].update({"actionType": "copy", "copyValue": string("${processRows[0].body}")})
+            copy[1].set("onTap", "@dtCopy{@toStr{@subdata{'body'}}}")
+            copy_label = node("BaseText", prefix + "copy_label", {"text": string("复制本页"), "color": "gray", "gravity": "right", "visible": visible()})
+            append(copy, (copy_label, xml("FastTextView", userId=copy_label["id"], text="复制本页", textGravity="right", textSize="12np",
+                paddingTop="8np", paddingBottom="8np", marginRight="12np", textColor="@dtDarkModeAdapter{'#707478','#B0B4BA'}")))
+            append(pane, copy)
+            append(pane, buttons(prefix + kind + "_pages", "processRows[0].navigation", loop=True))
+            append(content, pane)
+        else:
+            append(content, markdown(prefix + kind + "_body", "processRows[0].body", loop=True))
+            append(content, buttons(prefix + kind + "_pages", "processRows[0].navigation", loop=True))
         append((rows, rx), panel)
     append(inside, (rows, rx))
     append(inside, buttons(prefix + "process_pages", "processNavigation"))
@@ -209,7 +248,7 @@ def build():
         if name in LISTS:
             v["schema"] = [variable(name + "[0]." + k, private=name in PRIVATE) for k in BUTTON_KEYS]
         if name == "processRows":
-            v["schema"] = [variable("processRows[0]." + k, "markdown" if k == "body" else "string", private=True) for k in ("id", "kind", "title", "body", "pageLabel")]
+            v["schema"] = [variable("processRows[0]." + k, "markdown" if k in {"body", "codeBody"} else "string", private=True) for k in ("id", "kind", "title", "icon", "body", "codeBody", "toolName", "resultStatus", "pageLabel")]
             nav = variable("processRows[0].navigation", "loopArray", private=True)
             nav["schema"] = [variable("processRows[0].navigation[0]." + k, private=True) for k in BUTTON_KEYS]
             v["schema"].append(nav)
@@ -223,7 +262,9 @@ def build():
             "approvalTitle": "审批 · 执行数据分析", "approvalBody": "将运行销售分析脚本，读取本地销售数据并生成汇总报告。请确认是否允许执行。",
             "turnId": "preview", "processTitle": "正在处理 · 11 秒", "processNavigation": [],
             "processRows": [{"id": "reason1", "kind": "thought", "title": "思考过程", "body": "正在汇总本月销售数据，并比较各产品的销售表现。", "pageLabel": "", "navigation": []},
-                {"id": "tool1", "kind": "tool", "title": "python 分析销售数据.py", "body": "已读取 1,280 条销售记录，汇总报告已生成。", "pageLabel": "", "navigation": []}],
+                {"id": "tool1", "kind": "tool", "icon": "command", "title": "已运行 python 分析销售数据.py", "body": "python 分析销售数据.py\n\n已读取 1,280 条销售记录，汇总报告已生成。", "pageLabel": "", "navigation": []},
+                {"id": "tool2", "kind": "tool", "icon": "file", "title": "已读取 本月销售汇总.csv", "body": "本月销售汇总.csv\n\n已读取本月销售汇总。", "pageLabel": "", "navigation": []},
+                {"id": "tool3", "kind": "tool", "icon": "tool", "title": "正在调用 客户信息服务", "body": "正在等待服务返回结果…", "pageLabel": "", "navigation": []}],
             "approvalButtons": [{"text": label, "action": action, "turn_id": "preview", "step_id": "", "page": "0", "approval_id": "preview-approval"} for label, action in [("批准本次", "approve"), ("拒绝", "deny")]],
             "controls": []},
         "cardPrivateData": {"actionResult": "", "detailVisible": "no", "detailEpoch": "active",
@@ -232,6 +273,9 @@ def build():
         "localList": [], "hsfList": [], "lwpList": [], "extension": {"extendType": "AI", "aiStatusList": [1, 2, 3]}}
     ET.indent(native)
     editor["mockData"]["cardPrivateData"]["processRows"] = editor["mockData"]["cardData"].pop("processRows")
+    for row in editor["mockData"]["cardPrivateData"]["processRows"]:
+        row.update({"codeBody": "```text\n" + row["body"] + "\n```", "toolName": {"tool1": "Shell", "tool2": "文件读取", "tool3": "客户信息服务"}.get(row["id"], ""),
+            "resultStatus": "执行中" if row["id"] == "tool3" else "已完成"})
     return {"editorData": json.dumps(editor, ensure_ascii=False, separators=(",", ":")),
             "widgetInfo": ET.tostring(native, encoding="unicode"), "type": "im", "mode": "card"}
 

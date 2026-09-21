@@ -1,7 +1,7 @@
 {
   "id": "dingtalk-ai",
   "name": "钉钉 AI · 单卡对话",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "type": "channel",
   "description": "单轮单卡、流式思考、工具结果折叠、卡片审批和扫码配置。",
   "author": "fusheng8",

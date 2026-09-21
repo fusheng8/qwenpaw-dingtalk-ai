@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 import time
 from dataclasses import asdict, dataclass, field
@@ -151,6 +152,37 @@ def button(label: str, action: str, turn: Turn, **params) -> dict:
             **{k: str(v) for k, v in params.items()}}
 
 
+def activity(step: Step) -> tuple[str, str]:
+    """Compact status + meaningful argument; never truncate stored details."""
+    try:
+        args = json.loads(step.arguments)
+    except (ValueError, TypeError):
+        args = {}
+    if not isinstance(args, dict):
+        args = {}
+    name = step.name.lower()
+    command = next((args[k] for k in ("command", "cmd", "code") if args.get(k)), "")
+    target = next((args[k] for k in ("file_path", "path", "filename", "file", "url", "query", "pattern") if args.get(k)), "")
+    if command or any(k in name for k in ("shell", "exec", "terminal", "bash", "python")):
+        icon, verb, subject = "command", "运行", command or step.title
+    elif any(k in name for k in ("edit", "write", "patch", "replace")):
+        icon, verb, subject = "edit", "编辑", target or step.title
+    elif any(k in name for k in ("read", "open", "view")):
+        icon, verb, subject = "file", "读取", target or step.title
+    elif any(k in name for k in ("search", "find", "grep")):
+        icon, verb, subject = "tool", "搜索", target or step.title
+    else:
+        icon, verb, subject = "tool", "调用", step.title
+    prefix = "已" if step.status == "completed" else "正在"
+    if step.status in {"failed", "cancelled", "interrupted"}:
+        prefix = STATUS_LABELS[step.status] + " · "
+    # Fold newlines for a single activity row. Complete values remain in body.
+    summary = " ".join(text(subject).split())
+    if len(summary) > 160:
+        summary = summary[:159] + "…"
+    return f"{prefix}{verb} {summary}", icon
+
+
 def project(turn: Turn, *, page_bytes: int = 1800) -> dict[str, str]:
     """Inline process pages; expanding native panels needs no callback."""
     answer_pages = pages(turn.answer, page_bytes)
@@ -178,8 +210,15 @@ def project(turn: Turn, *, page_bytes: int = 1800) -> dict[str, str]:
             navigation.append(button("上一页", "inline_page", turn, step_id=step.id, page=page - 1))
         if page + 1 < len(chunks):
             navigation.append(button("下一页", "inline_page", turn, step_id=step.id, page=page + 1))
-        rows.append({"id": step.id, "kind": "thought" if step.kind in {"reasoning", "progress"} else "tool",
-            "title": step.title, "body": chunks[page] or "正在等待输出…",
+        is_thought = step.kind in {"reasoning", "progress"}
+        title, icon = (step.title, "thought") if is_thought else activity(step)
+        raw = chunks[page] or "正在等待输出…"
+        fence = "`" * max(3, 1 + max((len(m[0]) for m in re.finditer(r"`+", raw)), default=0))
+        rows.append({"id": step.id, "kind": "thought" if is_thought else "tool",
+            "title": title, "icon": icon, "body": raw,
+            "toolName": step.name or ("Shell" if icon == "command" else "工具"),
+            "codeBody": f"{fence}text\n{raw}\n{fence}",
+            "resultStatus": STATUS_LABELS.get(step.status, "执行中"),
             "pageLabel": f"第 {page + 1}/{len(chunks)} 页" if len(chunks) > 1 else "",
             "navigation": navigation})
     process_navigation = []

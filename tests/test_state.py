@@ -30,7 +30,7 @@ def test_completion_collapses_history_without_losing_it():
     t.step("tool", "tool", "ls").content = "file.txt"
     before = detail(t, "step", step_id="tool")
     assert before["detailEpoch"] == "active"
-    assert json.loads(project(t)["processRows"])[1]["title"] == "ls"
+    assert json.loads(project(t)["processRows"])[1]["title"] == "正在调用 ls"
     t.status, t.answer = "completed", "最终回答"
     final = project(t)
     assert final["thought"] == ""
@@ -69,3 +69,27 @@ def test_old_process_steps_remain_reachable_without_history_button():
     first = project(t)
     assert json.loads(first["processRows"])[0]["id"] == "0"
     assert json.loads(first["processNavigation"])[0]["action"] == "process_page"
+
+
+def test_all_external_activities_have_status_and_lossless_details():
+    from qpai.state import activity
+    t = Turn("t", "s", "u", "staff", "c")
+    for name, args, expected in [
+        ("exec_command", {"cmd": "python 分析.py"}, "正在运行 python 分析.py"),
+        ("read_file", {"file_path": "报告.csv"}, "正在读取 报告.csv"),
+        ("edit_file", {"path": "报告.csv"}, "正在编辑 报告.csv"),
+        ("search", {"query": "销售数据"}, "正在搜索 销售数据"),
+        ("crm_service", {}, "正在调用 crm_service"),
+    ]:
+        step = t.step(name, "tool", name)
+        step.name, step.arguments = name, json.dumps(args, ensure_ascii=False)
+        assert activity(step)[0] == expected
+        step.status = "completed"
+        assert activity(step)[0] == expected.replace("正在", "已")
+    step.arguments = json.dumps({"code": "print('x')\n" * 100})
+    step.content = "```\n完整结果\n```"
+    rows = json.loads(project(t)["processRows"])
+    assert len(rows[-1]["title"]) < 180 and "\n" not in rows[-1]["title"]
+    assert rows[-1]["body"].startswith(step.arguments)
+    assert rows[-1]["codeBody"].startswith("````text\n")
+    assert rows[-1]["resultStatus"] == "已完成"

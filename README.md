@@ -9,14 +9,14 @@
 在运行千问派的机器上执行：
 
 ```sh
-qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.2/dingtalk-ai-1.0.2.zip
+qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.3/dingtalk-ai-1.0.3.zip
 ```
 
 千问派已运行时，官方 CLI 会尝试热安装；未运行时，下次启动生效。安装后刷新控制台，在侧栏打开 **钉钉 AI**。升级同版本可在命令末尾加 `--force`。
 
 ## AI 卡片导入与配置
 
-1. [下载卡片导入文件](https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.2/dingtalk-ai-card.json)，也可在插件设置页点击「下载 AI 卡片模板」。
+1. [下载卡片导入文件](https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.3/dingtalk-ai-card.json)，也可在插件设置页点击「下载 AI 卡片模板」。
 2. 在 [钉钉卡片平台](https://card.dingtalk.com/) 新建 **AI 卡片**，通过模板编辑器的 JSON 导入功能选择该文件，保存并发布。复制完整模板 ID。
 3. 千问派侧栏「钉钉 AI」→「扫码填入凭据」，用钉钉完成授权。也可以手动填写已有企业内部应用的 Client ID、Client Secret。
 4. 填写刚发布的卡片模板 ID，启用渠道，保存。Robot Code 通常留空即可。
@@ -27,10 +27,10 @@ qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/
 
 ### 从旧版升级
 
-1.0.2 将过程改为原生折叠面板，移除「查看过程」按钮。顶部显示处理时长，思考实时展开，点击工具命令行直接展开结果，完成后过程自动收起。保留 1.0.1 的按钮成功判定修复和中文示例。请同时升级插件并重新导入、发布新模板。可以在原模板中导入后重新发布以保留模板 ID；若新建模板，则需要在插件配置中更新 ID。
+1.0.3 将所有外部工具、服务、命令及文件操作统一为思考过程区内的灰色单行活动摘要，显示图标、中文状态和操作目标，过长省略。展开后显示浅灰圆角结果框、工具名称、代码格式的完整参数和结果、执行状态及本页复制。顶部显示处理时长，思考实时展开，点击工具命令行直接展开结果，完成后过程自动收起。保留 1.0.1 的按钮成功判定修复和中文示例。请同时升级插件并重新导入、发布新模板。可以在原模板中导入后重新发布以保留模板 ID；若新建模板，则需要在插件配置中更新 ID。
 
 ```sh
-qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.2/dingtalk-ai-1.0.2.zip --force
+qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.3/dingtalk-ai-1.0.3.zip --force
 ```
 
 ## 交互行为
@@ -50,7 +50,7 @@ qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/
 
 目前面向文本、模型 reasoning、结构化工具事件和工具审批；不额外发送附件气泡，不提供定时任务主动推送。输入图片/文件沿用官方渠道接收能力；模型输出的非文本附件尚未集成到卡片下载区。
 
-已通过 24 项自动化测试，覆盖真实 QwenPaw 2.2.1 插件加载与流事件分发、对话生命周期、原生折叠状态、结果无损分页、过程详情私有投放、审批隔离与重复点击、重启恢复和模板结构。已在隔离的真实千问派控制台验证图形配置页面、表单校验与保存，并通过官方 CLI 的 URL ZIP 安装。**卡片平台导入发布、手机/桌面客户端渲染、组织扫码权限及真实审批闭环仍需实际钉钉账号验收；代码和结构测试不能替代该验收。**
+已通过 26 项自动化测试，覆盖真实 QwenPaw 2.2.1 插件加载与流事件分发、对话生命周期、原生折叠状态、结果无损分页、过程详情私有投放、审批隔离与重复点击、重启恢复和模板结构。已在隔离的真实千问派控制台验证图形配置页面、表单校验与保存，并通过官方 CLI 的 URL ZIP 安装。**卡片平台导入发布、手机/桌面客户端渲染、组织扫码权限及真实审批闭环仍需实际钉钉账号验收；代码和结构测试不能替代该验收。**
 
 ## 开发
 
