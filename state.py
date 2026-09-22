@@ -289,7 +289,8 @@ def project(turn: Turn, *, page_bytes: int = 1800) -> dict[str, str]:
     rows = []
     for step in process_steps:
         body = (step.arguments + "\n\n" if step.arguments else "") + step.content
-        chunks = pages(body, page_bytes)
+        is_thought = step.kind in {"reasoning", "progress"}
+        chunks = [body] if is_thought else pages(body, page_bytes)
         default_page = len(chunks) - 1 if step.kind == "reasoning" and turn.status not in TERMINAL else 0
         page = max(0, min(turn.view_pages.get(step.id, default_page), len(chunks) - 1))
         navigation = []
@@ -297,27 +298,23 @@ def project(turn: Turn, *, page_bytes: int = 1800) -> dict[str, str]:
             navigation.append(button("上一页", "inline_page", turn, step_id=step.id, page=page - 1))
         if page + 1 < len(chunks):
             navigation.append(button("下一页", "inline_page", turn, step_id=step.id, page=page + 1))
-        is_thought = step.kind in {"reasoning", "progress"}
         title, icon = (step.title or "思考过程", "thought") if is_thought else activity(step)
         raw = chunks[page] or "正在等待输出…"
         thought_text = raw
-        if is_thought and (len(raw) > 220 or len(chunks) > 1):
-            expanded = bool(turn.view_pages.get("_thought:" + step.id))
-            if not expanded:
-                thought_text = raw[:220] + ("…" if len(raw) > 220 else "")
-                navigation = []
-            navigation.insert(0, button("收起全文" if expanded else "展开全文", "thought_toggle", turn,
-                                        step_id=step.id, page=0 if expanded else 1))
+        if is_thought:
+            thought_text = raw[:220] + ("…" if len(raw) > 220 else "")
+            navigation = []
         fence = "`" * max(3, 1 + max((len(m[0]) for m in re.finditer(r"`+", raw)), default=0))
         rows.append({"id": step.id, "kind": "thought" if is_thought else "tool",
-            "title": title, "icon": icon, "body": raw,
+            "title": title, "icon": icon, "body": "" if is_thought else raw,
             "thoughtText": thought_text if is_thought else "",
-            "sheetTitle": f"{step.name or step.title or '工具详情'} · 第 {page + 1}/{len(chunks)} 页",
-            "sheetBody": STATUS_LABELS.get(step.status, "执行中") + "\n\n" + raw,
+            "hasThoughtDetail": "yes" if is_thought and len(raw) > 220 else "no",
+            "sheetTitle": ("完整思考" if step.kind == "reasoning" else "完整执行说明") if is_thought else f"{step.name or step.title or '工具详情'} · 第 {page + 1}/{len(chunks)} 页",
+            "sheetBody": raw if is_thought else STATUS_LABELS.get(step.status, "执行中") + "\n\n" + raw,
             "sheetPosition": "single" if len(chunks) == 1 else "start" if page == 0 else "end" if page == len(chunks) - 1 else "middle",
             "turn_id": turn.id, "previousPage": str(max(0, page - 1)), "nextPage": str(min(len(chunks) - 1, page + 1)),
             "toolName": step.name or ("Shell" if icon == "command" else "工具"),
-            "codeBody": f"{fence}text\n{raw}\n{fence}",
+            "codeBody": "" if is_thought else f"{fence}text\n{raw}\n{fence}",
             "resultStatus": STATUS_LABELS.get(step.status, "执行中"),
             "pageLabel": f"第 {page + 1}/{len(chunks)} 页" if len(chunks) > 1 else "",
             "navigation": navigation})

@@ -173,7 +173,7 @@ def test_loop_strings_use_editor_loop_scope_and_thought_is_direct_content():
     assert any(n["props"].get("text", {}).get("content") == "${loop.text}" for n in nodes)
     for phase in (2, 3):
         thought = next(n for n in nodes if n["id"] == f"qpai_p{phase}_thought")
-        assert [n["componentName"] for n in thought["children"]] == ["BaseText", "Loop"]
+        assert [n["componentName"] for n in thought["children"]] == ["BaseText", "Grid"]
         assert not any(n.get("props", {}).get("actionType") == "setLocalState" for n in walk(thought))
 
 
@@ -226,12 +226,13 @@ def test_thought_text_binds_a_string_not_a_markdown_variable():
     original = '思考内容\n**格式标记**\n' * 300
     turn.step('r', 'reasoning', '思考过程').content = original
     turn.view_pages['_thought:r'] = 1
-    result = []
-    for i in range(len(pages(original))):
-        turn.view_pages['r'] = i
-        row = json.loads(project(turn)['processRows'])[0]
-        assert row['thoughtText'] == row['body']
-        result.append(row['thoughtText'])
-    assert ''.join(result) == original
+    row = json.loads(project(turn)['processRows'])[0]
+    assert row['sheetBody'] == original
+    assert len(row['thoughtText']) == 221
+    for phase in (2, 3):
+        sheet = next(x for x in native.iter() if x.get('userId') == f'qpai_p{phase}_thought_full')
+        assert sheet.get('onTap').startswith('@dtActionSheet{')
+        assert 'sheetBody' in sheet.get('onTap')
+        assert '上一页' not in sheet.get('onTap') and '下一页' not in sheet.get('onTap')
     turn.status = 'completed'
     assert json.loads(project(turn)['processRows'])[0]['thoughtText']

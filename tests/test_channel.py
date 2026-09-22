@@ -108,7 +108,8 @@ async def test_thought_expand_updates_same_card_without_rewriting_stream(channel
     response = await channel.card_callback(callback(t, "thought_toggle", step_id="r", page=1))
     assert "content" not in response["cardData"]["cardParamMap"]
     row = json.loads(response["userPrivateData"]["cardParamMap"]["processRows"])[0]
-    assert row["thoughtText"] == row["body"]
+    assert len(row["thoughtText"]) == 221
+    assert row["sheetBody"] == t.steps[0].content
     assert channel.transport.create.await_count == 1
 
 

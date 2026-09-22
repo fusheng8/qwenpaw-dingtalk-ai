@@ -44,12 +44,14 @@ def test_long_thought_preview_expands_without_losing_chronology():
     t.view_pages["r"] = 0
     row = json.loads(project(t)["processRows"])[0]
     assert len(row["thoughtText"]) == 221
-    assert [b["text"] for b in row["navigation"]] == ["展开全文"]
+    assert row["navigation"] == [] and row["hasThoughtDetail"] == "yes"
+    assert row["sheetBody"] == t.steps[0].content
+    assert row["sheetPosition"] == "single"
     t.view_pages["_thought:r"] = 1
     rows = json.loads(project(t)["processRows"])
     assert [r["id"] for r in rows] == ["r", "tool"]
-    assert rows[0]["thoughtText"] == rows[0]["body"]
-    assert [b["text"] for b in rows[0]["navigation"]] == ["收起全文", "下一页"]
+    assert rows[0]["thoughtText"] == row["thoughtText"]
+    assert rows[0]["navigation"] == []
 
 
 def test_interruption_without_answer_still_has_final_error_content():

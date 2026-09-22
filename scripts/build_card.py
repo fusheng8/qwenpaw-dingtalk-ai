@@ -279,8 +279,9 @@ def localized(value):
     return map_expr({"zh_CN": value, "en_US": value})
 
 
-def tool_link(key, position):
-    conditions = [cond("processRows[0].kind", "tool"), cond("processRows[0].sheetPosition", position)]
+def tool_link(key, position, thought=False):
+    conditions = ([cond("processRows[0].kind", "thought"), cond("processRows[0].hasThoughtDetail")]
+                  if thought else [cond("processRows[0].kind", "tool"), cond("processRows[0].sheetPosition", position)])
     for c in conditions: c["variableType"] = "loop"
     items, native_items = [], []
     actions = []
@@ -312,11 +313,19 @@ def tool_link(key, position):
         "items": "@dtArrayAppend{null," + ",".join(native_items) + "}"})
     x = xml(userId=n["id"], marginLeft="12np", marginRight="12np", marginTop="6np", marginBottom="6np",
         visibility=show("@and{@equal{@subdata{'kind'},'tool'},@equal{@subdata{'sheetPosition'},'" + position + "'}}"), onTap="@dtActionSheet{" + sheet + "}")
+    if thought:
+        x.set("visibility", show("@and{@equal{@subdata{'kind'},'thought'},@equal{@subdata{'hasThoughtDetail'},'yes'}}"))
     row, rx = thinking_text(key + "_label")
     row["props"].update(text=string("${loop.title}  ›"), customFontSize=14,
         maxLine={"type": "dynamicNumber", "valueType": "fixed", "value": 1},
         marginLeft=0, marginRight=0, marginTop=0, marginBottom=0)
     rx.set("text", "@concat{@subdata{'title'},'  ›'}")
+    if thought:
+        row["props"]["text"] = string("查看全文")
+        row["props"]["customLightColor"]["value"] = "#007FFF"
+        row["props"]["customDarkColor"]["value"] = "#47A9FF"
+        rx.set("text", "查看全文")
+        rx.set("textColor", "@dtDarkModeAdapter{'#007FFF','#47A9FF'}")
     rx.set("textSize", "14np"); rx.set("maxLines", "1"); rx.set("lineBreakMode", "end")
     for side in ("Left", "Right", "Top", "Bottom"):
         rx.set("margin" + side, "0np")
@@ -334,7 +343,7 @@ def process_panel(prefix, running):
     c = cond("processRows[0].kind", "thought"); c["variableType"] = "loop"
     thought = wrap(prefix + "thought", c)
     append(thought, thinking_text(prefix + "thought_body"))
-    append(thought, text_links(prefix + "thought_pages", "processRows[0].navigation"))
+    append(thought, tool_link(prefix + "thought_full", "single", thought=True))
     append(event, thought)
     for position in ("single", "start", "middle", "end"):
         append(event, tool_link(prefix + "tool_" + position, position))
@@ -405,7 +414,7 @@ def build():
         if name in LISTS:
             v["schema"] = [variable(name + "[0]." + k, private=name in PRIVATE) for k in BUTTON_KEYS]
         if name == "processRows":
-            v["schema"] = [variable("processRows[0]." + k, "markdown" if k in {"body", "codeBody"} else "string", private=True) for k in ("id", "kind", "title", "icon", "body", "thoughtText", "codeBody", "toolName", "resultStatus", "pageLabel", "sheetTitle", "sheetBody", "sheetPosition", "turn_id", "previousPage", "nextPage")]
+            v["schema"] = [variable("processRows[0]." + k, "markdown" if k in {"body", "codeBody"} else "string", private=True) for k in ("id", "kind", "title", "icon", "body", "thoughtText", "hasThoughtDetail", "codeBody", "toolName", "resultStatus", "pageLabel", "sheetTitle", "sheetBody", "sheetPosition", "turn_id", "previousPage", "nextPage")]
             nav = variable("processRows[0].navigation", "loopArray", private=True)
             nav["schema"] = [variable("processRows[0].navigation[0]." + k, private=True) for k in BUTTON_KEYS]
             v["schema"].append(nav)
@@ -441,7 +450,8 @@ def build():
         if key in PRIVATE:
             editor["mockData"]["cardPrivateData"][key] = mock.pop(key)
     for row in editor["mockData"]["cardPrivateData"]["processRows"]:
-        row["thoughtText"] = row["body"] if row["kind"] == "thought" else ""
+        row["thoughtText"] = row["body"][:220] if row["kind"] == "thought" else ""
+        row["hasThoughtDetail"] = "yes" if row["kind"] == "thought" and len(row["body"]) > 220 else "no"
         row.update({"sheetTitle": "工具详情 · 第 1/1 页", "sheetBody": row["body"], "sheetPosition": "single", "turn_id": "preview", "previousPage": "0", "nextPage": "0", "codeBody": "```text\n" + row["body"] + "\n```", "toolName": {"tool1": "Shell", "tool2": "文件读取", "tool3": "客户信息服务"}.get(row["id"], ""),
             "resultStatus": "执行中" if row["id"] == "tool3" else "已完成"})
     return {"editorData": json.dumps(editor, ensure_ascii=False, separators=(",", ":")),
