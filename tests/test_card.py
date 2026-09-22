@@ -208,7 +208,7 @@ def test_thinking_is_secondary_and_answer_retains_markdown():
     root = ET.fromstring(card["widgetInfo"])
     for phase in (2,3):
         thought = next(x for x in root.iter() if x.get("userId") == f"qpai_p{phase}_thought_body")
-        assert thought.tag == "FastTextView" and thought.get("textSize") == "13np"
+        assert thought.tag == "FastTextView" and thought.get("textSize") == "12np"
         assert "#70757A" in thought.get("textColor")
         answer = next(x for x in root.iter() if x.get("userId") == f"qpai_p{phase}_answer")
         assert answer[0].tag == "DDRichTextView"

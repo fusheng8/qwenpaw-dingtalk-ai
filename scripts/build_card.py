@@ -529,6 +529,22 @@ def build(top=False):
                 append(expanded, buttons(prefix + "detail_buttons", "detailButtons"))
                 append(pair, expanded)
             root["children"].append(status); native.append(sx)
+    if not top:
+        # Compact the message text without altering the separate ceiling card.
+        def compact_message_text(n):
+            props = n.get("props", {})
+            if n.get("componentName") == "BaseText":
+                props["customFontSize"] = max(12, props.get("customFontSize", 14) - 1)
+                props["customFontLineHeight"] = max(18, props.get("customFontLineHeight", 22) - 2)
+                props.update(styleType="custom", fontSizeType="Custom")
+            for child in n.get("children", []):
+                compact_message_text(child)
+        compact_message_text(root)
+        for element in native.iter("FastTextView"):
+            for attr, floor, delta in (("textSize", 12, 1), ("lineHeight", 18, 2)):
+                value = element.get(attr, "")
+                if value.endswith("np") and value[:-2].isdigit():
+                    element.set(attr, str(max(floor, int(value[:-2]) - delta)) + "np")
     variables = []
     for name in sorted(NAMES):
         kind = "loopArray" if name in LISTS or name == "processRows" else "markdown" if name in MARKDOWN else "number" if name == "flowStatus" else "string"
