@@ -18,7 +18,7 @@ TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
 APPROVAL_FIELDS = {"approvalTitle", "approvalBody", "approvalButtons", "approvalAllow", "approvalDeny",
                    "approvalDetail", "approvalDetailTitle", "approvalPages", "approvalTarget",
                    "hasApprovalTarget", "hasApprovalDetail", "hasApproval", "approvalHint", "approvalOperation"}
-PRIVATE_FIELDS = {"processRows", *APPROVAL_FIELDS}
+PRIVATE_FIELDS = {"processRows", "approvalNotice", *APPROVAL_FIELDS}
 STATUS_LABELS = {"running": "执行中", "completed": "已完成", "failed": "执行失败",
                  "cancelled": "已停止", "interrupted": "已中断", "pending": "待审批",
                  "approved": "已批准", "denied": "已拒绝", "expired": "已过期"}
@@ -164,6 +164,10 @@ class Turn:
     answer_position: int | None = None
     message_id: str = ""
     reaction: str = ""
+    top_created: bool = False
+    top_active: bool = False
+    top_expires: float = 0
+    top_error: str = ""
 
     def touch(self):
         self.updated = time.time()
@@ -227,6 +231,11 @@ class Store:
 
     def recent(self, limit: int = 100) -> list[Turn]:
         return [self.decode(r[0]) for r in self.db.execute("SELECT data FROM turns ORDER BY updated DESC LIMIT ?", (limit,))]
+
+    def approval_turns(self) -> list[Turn]:
+        rows = self.db.execute("SELECT data FROM turns WHERE json_extract(data, '$.top_active') = 1 "
+            "OR json_extract(data, '$.status') NOT IN ('completed','failed','cancelled','interrupted')")
+        return [self.decode(row[0]) for row in rows]
 
     def prune(self, days: int):
         self.db.execute("DELETE FROM turns WHERE updated < ?", (time.time() - days * 86400,))

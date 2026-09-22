@@ -79,19 +79,19 @@
       } catch (e) { setError(e.message); }
       finally { setSaving(false); }
     }
-    async function download() {
+    async function download(top = false) {
       try {
-        const response = await paw.host.fetch("/dingtalk-ai/template");
+        const response = await paw.host.fetch(top ? "/dingtalk-ai/top-template" : "/dingtalk-ai/template");
         if (!response.ok) throw new Error("模板下载失败");
         const url = URL.createObjectURL(await response.blob());
-        const a = document.createElement("a"); a.href = url; a.download = "dingtalk-ai-card.json"; a.click();
+        const a = document.createElement("a"); a.href = url; a.download = top ? "dingtalk-approval-top-card.json" : "dingtalk-ai-card.json"; a.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
       } catch (e) { setError(e.message); }
     }
     const item = (name, label, child, props = {}) => h(Form.Item, {name, label, ...props}, child);
     return h("main", {style: {maxWidth: 840, margin: "0 auto", padding: "32px 20px 64px"}},
       h(T.Title, {level: 2, style: {marginTop: 0}}, "钉钉 AI · 单卡对话"),
-      h(T.Paragraph, {type: "secondary"}, "每条消息只回复一张卡片。实时查看思考与工具进度，在卡片上审批，完成后聚焦最终回答。"),
+      h(T.Paragraph, {type: "secondary"}, "每条消息只回复一张卡片。实时查看思考与工具进度，在会话顶部审批，完成后聚焦最终回答。"),
       error && h(Alert, {type: "error", showIcon: true, message: error, style: {marginBottom: 16}, role: "alert"}),
       notice && h(Alert, {type: "success", showIcon: true, message: notice, style: {marginBottom: 16}, role: "status"}),
       h(Spin, {spinning: busy},
@@ -108,9 +108,12 @@
             item("client_secret", "Client Secret / AppSecret", h(Input.Password, {autoComplete: "new-password", placeholder: hasSecret ? "已保存；留空保留当前密钥" : "扫码自动填入，或手动粘贴"})),
             h(Divider),
             h(T.Paragraph, null, "下载模板，在钉钉卡片平台新建 AI 卡片并导入 JSON，保存发布后复制模板 ID。"),
-            h(Space, {wrap: true, style: {marginBottom: 20}}, h(Button, {onClick: download}, "下载 AI 卡片模板"),
+            h(Space, {wrap: true, style: {marginBottom: 20}}, h(Button, {onClick: () => download(false)}, "下载 AI 卡片模板"),
               h(T.Link, {href: "https://card.dingtalk.com/", target: "_blank", rel: "noopener noreferrer"}, "打开卡片平台")),
             item("card_template_id", "AI 卡片模板 ID", h(Input, {placeholder: "填写已发布模板的 ID"}), {rules: [{required: true, message: "请填写已发布的卡片模板 ID"}]}),
+            h(T.Paragraph, {type: "secondary"}, "审批使用另一个普通互动卡片模板，导入发布后填写下方 ID。"),
+            h(Button, {onClick: () => download(true), style: {marginBottom: 16}}, "下载审批吊顶模板"),
+            item("top_template_id", "审批吊顶模板 ID", h(Input, {placeholder: "导入并发布普通互动卡片后填写"}), {extra: "待审批时在会话顶部显示，处理后自动关闭。未配置时审批不会自动通过。"}),
             item("robot_code", "Robot Code（可选）", h(Input, {placeholder: "留空使用 Client ID"}))),
           h(Card, {title: "3. 启用渠道"},
             item("require_mention", "群聊中需要 @ 机器人", h(Switch), {valuePropName: "checked"}),

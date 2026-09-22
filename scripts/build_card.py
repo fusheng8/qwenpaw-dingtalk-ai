@@ -8,7 +8,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
-PRIVATE = {"detailTitle", "detailBody", "detailButtons", "detailVisible", "detailEpoch", "actionResult", "processRows"}
+PRIVATE = {"detailTitle", "detailBody", "detailButtons", "detailVisible", "detailEpoch", "actionResult", "processRows", "approvalNotice"}
 PRIVATE.update({"approvalTitle", "approvalBody", "approvalButtons", "approvalAllow", "approvalDeny",
     "approvalDetail", "approvalDetailTitle", "approvalPages", "approvalTarget", "hasApprovalTarget",
     "hasApprovalDetail", "hasApproval", "approvalHint", "approvalOperation"})
@@ -357,56 +357,72 @@ def process_panel(prefix, running):
     return outer
 
 
-def build():
+def approval_panel(prefix):
+    approval = wrap(prefix + "approval", cond("hasApproval"))
+    append(approval, label(prefix + "approval_title", "approvalTitle", bold=True))
+    append(approval, label(prefix + "approval_operation", "approvalOperation", muted=True))
+    target = wrap(prefix + "approval_target", cond("hasApprovalTarget"))
+    append(target, label(prefix + "approval_target_text", "approvalTarget"))
+    append(approval, target)
+    brief = wrap(prefix + "approval_brief", {**cond("approvalBody", ""), "op": "notEqual"})
+    append(brief, label(prefix + "approval_body", "approvalBody"))
+    append(approval, brief)
+    append(approval, buttons(prefix + "approval_allow", "approvalAllow", primary=True))
+    append(approval, buttons(prefix + "approval_deny", "approvalDeny"))
+    hint = wrap(prefix + "approval_hint_wrap", {**cond("approvalHint", ""), "op": "notEqual"})
+    append(hint, label(prefix + "approval_hint", "approvalHint", muted=True))
+    append(approval, hint)
+    fold, fold_body = material_disclosure(prefix + "approval_", False, "approvalDetailTitle", "hasApprovalDetail")
+    append(fold_body, label(prefix + "approval_full", "approvalDetail"))
+    append(fold_body, buttons(prefix + "approval_pages", "approvalPages"))
+    append(approval, fold)
+    return approval
+
+
+def build(top=False):
+    components.clear()
     LOCAL.clear()
     EXPRESSIONS.clear()
-    root = node("AICardContainer", "root", {"enablePending": True, "enableWriting": True,
-        "enableFailed": False, "enableDoing": False, "enableTitle": False, "enableFlowAbort": False,
-        "summaryContent": ref("lastMessage"), "flowStatusVar": ref("flowStatus"),
-        "operationPenalType": "prompt", "marginLeft": 0, "marginRight": 0, "marginTop": 0, "marginBottom": 0}, [])
-    native = xml(userId=root["id"], orientation="vertical", width="@data{width}", cornerRadius="8np",
-        backgroundColor="@dtDarkModeAdapter{'#FFFFFF','#1E1E1E'}")
-    for phase in (1, 2, 3):
-        status = node("AICardStatusContainer", f"phase{phase}", {"status": phase,
-            "enableExtend": False, "enableCollapse": False, "autoFoldConfig": {"needFold": False, "heightLimit": 480,
-            "foldStatusLocalDataKey": "qpai_fold"}}, [])
-        sx = xml(userId=status["id"], orientation="vertical", visibility=show("@equal{@toStr{" + data("flowStatus") + "},'" + str(phase) + "'}"))
-        pair = (status, sx)
-        prefix = f"p{phase}_"
-        if phase == 1:
-            append(pair, label(prefix + "status", "status"))
-        else:
-            content = node("AICardContent", prefix + "body", {"visible": visible()}, [])
-            cx = xml(userId=content["id"], orientation="vertical")
-            append(pair, (content, cx)); pair = (content, cx)
-            append(pair, process_panel(prefix, phase == 2))
-            approval = wrap(prefix + "approval", cond("hasApproval"))
-            append(approval, label(prefix + "approval_title", "approvalTitle", bold=True))
-            append(approval, label(prefix + "approval_operation", "approvalOperation", muted=True))
-            target = wrap(prefix + "approval_target", cond("hasApprovalTarget"))
-            append(target, label(prefix + "approval_target_text", "approvalTarget"))
-            append(approval, target)
-            brief = wrap(prefix + "approval_brief", {**cond("approvalBody", ""), "op": "notEqual"})
-            append(brief, label(prefix + "approval_body", "approvalBody"))
-            append(approval, brief)
-            append(approval, buttons(prefix + "approval_allow", "approvalAllow", primary=True))
-            append(approval, buttons(prefix + "approval_deny", "approvalDeny"))
-            hint = wrap(prefix + "approval_hint_wrap", {**cond("approvalHint", ""), "op": "notEqual"})
-            append(hint, label(prefix + "approval_hint", "approvalHint", muted=True))
-            append(approval, hint)
-            fold, fold_body = material_disclosure(prefix + "approval_", False, "approvalDetailTitle", "hasApprovalDetail")
-            append(fold_body, label(prefix + "approval_full", "approvalDetail"))
-            append(fold_body, buttons(prefix + "approval_pages", "approvalPages"))
-            append(approval, fold)
-            append(pair, approval)
-            append(pair, markdown(prefix + "answer", "content" if phase == 2 else "finalContent", streaming=phase == 2))
-            append(pair, buttons(prefix + "controls", "controls"))
-            expanded = wrap(prefix + "detail", cond("detailVisible"), cond("detailEpoch", "active" if phase == 2 else "done"))
-            append(expanded, label(prefix + "detail_title", "detailTitle"))
-            append(expanded, markdown(prefix + "detail_body", "detailBody"))
-            append(expanded, buttons(prefix + "detail_buttons", "detailButtons"))
-            append(pair, expanded)
-        root["children"].append(status); native.append(sx)
+    if top:
+        root = node("Card", "top_root", {"visible": visible()}, [])
+        native = xml(userId=root["id"], orientation="vertical", width="@data{width}",
+            backgroundColor="@dtDarkModeAdapter{'#FFFFFF','#1E1E1E'}")
+        append((root, native), approval_panel("top_"))
+        errors = wrap("top_error", cond("detailVisible"))
+        append(errors, label("top_error_text", "detailBody", muted=True))
+        append((root, native), errors)
+    else:
+        root = node("AICardContainer", "root", {"enablePending": True, "enableWriting": True,
+            "enableFailed": False, "enableDoing": False, "enableTitle": False, "enableFlowAbort": False,
+            "summaryContent": ref("lastMessage"), "flowStatusVar": ref("flowStatus"),
+            "operationPenalType": "prompt", "marginLeft": 0, "marginRight": 0, "marginTop": 0, "marginBottom": 0}, [])
+        native = xml(userId=root["id"], orientation="vertical", width="@data{width}", cornerRadius="8np",
+            backgroundColor="@dtDarkModeAdapter{'#FFFFFF','#1E1E1E'}")
+        for phase in (1, 2, 3):
+            status = node("AICardStatusContainer", f"phase{phase}", {"status": phase,
+                "enableExtend": False, "enableCollapse": False, "autoFoldConfig": {"needFold": False, "heightLimit": 480,
+                "foldStatusLocalDataKey": "qpai_fold"}}, [])
+            sx = xml(userId=status["id"], orientation="vertical", visibility=show("@equal{@toStr{" + data("flowStatus") + "},'" + str(phase) + "'}"))
+            pair = (status, sx)
+            prefix = f"p{phase}_"
+            if phase == 1:
+                append(pair, label(prefix + "status", "status"))
+            else:
+                content = node("AICardContent", prefix + "body", {"visible": visible()}, [])
+                cx = xml(userId=content["id"], orientation="vertical")
+                append(pair, (content, cx)); pair = (content, cx)
+                append(pair, process_panel(prefix, phase == 2))
+                notice = wrap(prefix + "approval_notice", {**cond("approvalNotice", ""), "op": "notEqual"})
+                append(notice, label(prefix + "approval_notice_text", "approvalNotice", muted=True))
+                append(pair, notice)
+                append(pair, markdown(prefix + "answer", "content" if phase == 2 else "finalContent", streaming=phase == 2))
+                append(pair, buttons(prefix + "controls", "controls"))
+                expanded = wrap(prefix + "detail", cond("detailVisible"), cond("detailEpoch", "active" if phase == 2 else "done"))
+                append(expanded, label(prefix + "detail_title", "detailTitle"))
+                append(expanded, markdown(prefix + "detail_body", "detailBody"))
+                append(expanded, buttons(prefix + "detail_buttons", "detailButtons"))
+                append(pair, expanded)
+            root["children"].append(status); native.append(sx)
     variables = []
     for name in sorted(NAMES):
         kind = "loopArray" if name in LISTS or name == "processRows" else "markdown" if name in MARKDOWN else "number" if name == "flowStatus" else "string"
@@ -438,6 +454,9 @@ def build():
             "detailTitle": "工具执行结果", "detailBody": "已读取 1,280 条销售记录，汇总报告已生成。", "detailButtons": []}, "localData": {}},
         "customWidgetInfo": "", "useCustomWidgetInfo": False, "formList": [], "expList": EXPRESSIONS,
         "localList": [{"id": key, "name": key, "type": kind, "private": False, "editorVarType": "localList"} for key, kind in LOCAL.items()], "hsfList": [], "lwpList": [], "extension": {"extendType": "AI", "aiStatusList": [1, 2, 3]}}
+    if top:
+        editor["extension"] = {"extendType": "NORMAL"}
+        editor["mockData"]["cardData"]["hasApproval"] = "yes"
     ET.indent(native)
     editor["mockData"]["cardPrivateData"]["processRows"] = editor["mockData"]["cardData"].pop("processRows")
     mock = editor["mockData"]["cardData"]
@@ -459,7 +478,8 @@ def build():
 
 
 if __name__ == "__main__":
-    target = ROOT / "cards" / "dingtalk-ai-card.json"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(build(), ensure_ascii=False, indent=2) + "\n")
-    print(target)
+    for name, top in [("dingtalk-ai-card.json", False), ("dingtalk-approval-top-card.json", True)]:
+        target = ROOT / "cards" / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(build(top=top), ensure_ascii=False, indent=2) + "\n")
+        print(target)

@@ -1,6 +1,6 @@
 # 千问派 · 钉钉 AI 单卡渠道
 
-独立的 QwenPaw 渠道插件。每条用户消息对应一张 AI 卡片，在同一张卡片内呈现思考、工具调用、审批和最终回答。
+独立的 QwenPaw 渠道插件。每条用户消息对应一张 AI 卡片，在同一张消息卡片内呈现思考、工具调用和最终回答；工具审批使用会话顶部的独立吊顶卡片。
 
 > 支持 QwenPaw 2.2.1；声明兼容范围为 `>=2.2.1,<2.3.0`。卡片使用钉钉原生组件，不是嵌入网页。首次使用仍需用户扫码授权、导入发布模板并填写模板 ID。
 
@@ -9,23 +9,29 @@
 在运行千问派的机器上执行：
 
 ```sh
-qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.14/dingtalk-ai-1.0.14.zip
+qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.15/dingtalk-ai-1.0.15.zip
 ```
 
 千问派已运行时，官方 CLI 会尝试热安装；未运行时，下次启动生效。安装后刷新控制台，在侧栏打开 **钉钉 AI**。升级同版本可在命令末尾加 `--force`。
 
 ## AI 卡片导入与配置
 
-1. [下载卡片导入文件](https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.14/dingtalk-ai-card.json)，也可在插件设置页点击「下载 AI 卡片模板」。
+1. [下载卡片导入文件](https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.15/dingtalk-ai-card.json)，也可在插件设置页点击「下载 AI 卡片模板」。
 2. 在 [钉钉卡片平台](https://card.dingtalk.com/) 新建 **AI 卡片**，通过模板编辑器的 JSON 导入功能选择该文件，保存并发布。复制完整模板 ID。
 3. 千问派「渠道」→「钉钉 AI · 单卡对话」→ Client ID 上方的「获取二维码」，用钉钉按官方流程选择或创建机器人并完成授权。凭据自动填入当前表单，填写模板 ID 后点击保存。侧栏「钉钉 AI」的独立设置页也保留扫码入口。也可以手动填写已有企业内部应用的 Client ID、Client Secret。
-4. 填写刚发布的卡片模板 ID，启用渠道，保存。Robot Code 通常留空即可。
+4. 另行[下载审批吊顶模板](https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.15/dingtalk-approval-top-card.json)，在卡片平台新建**普通互动卡片**，导入、发布；将 ID 填入「审批吊顶模板 ID」。两个模板 ID 分别填写，不能混用。启用渠道并保存，Robot Code 通常留空即可。
 5. 应用应有机器人能力、接收模式为 **Stream**，开通互动卡片实例创建、投放、更新和流式更新接口需要的权限，并发布到测试用户可访问的范围。权限申请和组织管理员审批不能由插件代替。
 6. 若与官方钉钉渠道使用同一应用，勾选停用官方渠道。不要同时运行多个使用相同 Client ID 的 Stream 接收服务，否则消息或按钮回调可能被其他实例消费。
 
 扫码复用千问派官方的 `/api/config/channels/dingtalk/qrcode` 和状态接口。扫码只自动填写应用凭据，**不会自动生成卡片模板 ID，也不代表应用权限已经获批**。
 
 ### 从旧版升级
+
+1.0.15 将审批迁移到会话顶部吊顶。需要升级插件、重新导入主 AI 卡片，并新增导入普通审批吊顶模板、填写其 ID。主消息只显示简短待确认提示，审批完成后提示和吊顶隐藏；同一会话、同一发起者的多项请求按顺序处理。同一轮内切换请求更新原吊顶，其他轮次依次投放；不会发送第二条聊天消息。
+
+使用官方 `createAndDeliver` / `deliver` 的 `ONE_BOX` 场域，`callbackType=STREAM`，仅向发起者 `userIds` 投放，审批内容继续使用私有变量。关闭使用 `POST /v1.0/card/tops/close` 的 query 参数。无模板、会话不支持或权限不足时不会回退为自动批准，主消息提示错误并重试。已处理请求的旧按钮仍会被服务端拒绝。后台每 5 秒检查未完成的投放或清理；吊顶设置 10 分钟过期并在待审批期间续期，用于限制服务崩溃后的残留时间。正常处理后主动关闭，网络故障时不能保证立即消失。
+
+接口与接入条件：[官方创建并投放卡片文档](https://open.dingtalk.com/document/development/create-and-deliver-cards)、[官方吊顶会话接入说明](https://open.dingtalk.com/document/development/send-group-helper-message)。应用需要互动卡片实例写权限。单聊须先建立机器人会话（插件先投放主回复卡片）；群聊吊顶有群模板／酷应用等接入条件，不能假设所有普通群均支持。新版 ONE_BOX 在当前机器人单聊及具体群环境中的可用性仍需实际投放验收，接口拒绝时会保留待确认状态而不会继续执行。
 
 1.0.14 将思考的「展开全文」改为「查看全文」动作面板入口。卡片内保持约 220 字符预览，面板使用该段完整文本，无思考分页；关闭面板不会改变卡片布局。需要同时升级插件、重新导入并发布卡片模板。超长文本在手机及桌面端的实际面板显示仍需验收。
 
@@ -52,7 +58,7 @@ qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/
 1.0.3 将所有外部工具、服务、命令及文件操作统一为思考过程区内的灰色单行活动摘要，显示图标、中文状态和操作目标，过长省略。展开后显示浅灰圆角结果框、工具名称、代码格式的完整参数和结果、执行状态及本页复制。顶部显示处理时长，思考实时展开，点击工具命令行直接展开结果，完成后过程自动收起。保留 1.0.1 的按钮成功判定修复和中文示例。请同时升级插件并重新导入、发布新模板。可以在原模板中导入后重新发布以保留模板 ID；若新建模板，则需要在插件配置中更新 ID。
 
 ```sh
-qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.14/dingtalk-ai-1.0.14.zip --force
+qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.15/dingtalk-ai-1.0.15.zip --force
 ```
 
 ## 交互行为
@@ -60,7 +66,7 @@ qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/
 - 接到任务后创建卡片；提供方实际输出的 reasoning 流实时更新。模型没有公开 reasoning 时，只显示处理状态，不编造思考内容。
 - 第一层使用组件素材「展开折叠」，显示「正在处理／已处理 N 秒」。思考正文直接位于其中；工具、命令、服务调用使用灰色可点击行，点击动作面板查看参数、结果和状态。长思考默认显示预览，点击「查看全文」打开原生动作面板展示该段完整文本，已投放内容的打开操作不依赖插件回调。
 - 过程页通过钉钉私有变量投放给本轮发起者。第一层展开和收起在客户端本地完成。工具结果的翻页位于动作面板内，切页后面板关闭，再点击同一工具链接查看新页。全部过程记录按顺序放在同一页，不再显示较早／较新过程。思考全文在动作面板内展示，工具完整结果仍保留详情分页。
-- 审批到来时原卡片显示「允许本次执行」「拒绝执行」。绑定当前智能体、当前会话、当前请求和发起者的钉钉 userId；重复、过期、错卡片和其他用户的点击不会执行审批。
+- 审批到来时会话顶部吊顶显示「允许本次执行」「拒绝执行」，原消息不再放审批按钮。绑定当前智能体、当前会话、当前请求和发起者的钉钉 userId；重复、过期、错卡片和其他用户的点击不会执行审批。
 - 操作参数来自当前审批请求的 tool_call.input、服务提供的 input 或明确的 command/cwd 等字段，不从其他工具调用猜测。上游未提供参数时仅展示说明；展开入口相应显示「完整说明」。短说明无重复详情按钮。审批区独立于思考过程的折叠状态。
 - 完成时第一层过程切换为独立的默认折叠状态，最终回答在下方保持展开。没有过程内容时不显示空面板。动作面板提供文字详情，无需部署外部网页，不承诺代码编辑器样式。
 - 长回答和工具结果受钉钉卡片大小限制，默认每页约 1800 UTF-8 字节；长回答首屏显示第一页并提供「阅读全文」。详情不会因预览长度被丢弃。
@@ -73,7 +79,7 @@ qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/
 
 目前面向文本、模型 reasoning、结构化工具事件和工具审批；不额外发送附件气泡，不提供定时任务主动推送。输入图片/文件沿用官方渠道接收能力；模型输出的非文本附件尚未集成到卡片下载区。
 
-已通过 62 项自动化测试，覆盖真实 QwenPaw 2.2.1 插件加载与流事件分发、对话生命周期、原生折叠状态、结果无损分页、过程详情私有投放、审批隔离与重复点击、重启恢复和模板结构。已在隔离的真实千问派控制台验证图形配置页面、表单校验与保存，并通过官方 CLI 的 URL ZIP 安装。**卡片平台导入发布、手机/桌面客户端渲染、组织扫码权限及真实审批闭环仍需实际钉钉账号验收；代码和结构测试不能替代该验收。**
+已通过 74 项自动化测试，覆盖真实 QwenPaw 2.2.1 插件加载与流事件分发、对话生命周期、原生折叠状态、结果无损分页、过程详情私有投放、审批隔离与重复点击、重启恢复和模板结构。已在隔离的真实千问派控制台验证图形配置页面、表单校验与保存，并通过官方 CLI 的 URL ZIP 安装。**卡片平台导入发布、手机/桌面客户端渲染、组织扫码权限及真实审批闭环仍需实际钉钉账号验收；代码和结构测试不能替代该验收。**
 
 ## 开发
 
@@ -85,7 +91,7 @@ python scripts/build_card.py
 python scripts/package.py
 ```
 
-`channel.py` 继承官方渠道的 Stream 接收及输入媒体处理，替换整个回复生命周期；`state.py` 持久化完整事件并生成公共/私有视图；`transport.py` 只操作同一 outTrackId；`ui/index.js` 使用千问派宿主 React/Ant Design，无额外 Node 运行依赖。
+`channel.py` 继承官方渠道的 Stream 接收及输入媒体处理，替换整个回复生命周期；`state.py` 持久化完整事件并生成公共/私有视图；`transport.py` 为主回复保留同一 outTrackId，审批另用独立的吊顶实例 ID；`ui/index.js` 使用千问派宿主 React/Ant Design，无额外 Node 运行依赖。
 
 发布 ZIP 采用显式文件白名单，不包含凭据、数据库、虚拟环境或测试数据。发布页附有 `SHA256SUMS`。
 

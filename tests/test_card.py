@@ -23,30 +23,32 @@ def test_finished_answer_uses_independent_static_binding_and_tools_are_muted():
         assert row["props"]["actionType"] == "actionSheet"
 
 
-def test_approval_is_outside_process_with_primary_action_and_local_details():
+def test_approval_is_in_separate_normal_top_card():
     from qpai.state import APPROVAL_FIELDS
-    card = json.loads((ROOT / "cards/dingtalk-ai-card.json").read_text())
-    editor = json.loads(card["editorData"])
     def walk(node):
         yield node
         for child in node.get("children", []):
             yield from walk(child)
+    main = json.loads(json.loads((ROOT / "cards/dingtalk-ai-card.json").read_text())["editorData"])
+    main_nodes = list(walk(main["schema"]["componentsTree"][0]))
+    assert not any(n["id"].endswith("approval_allow_button") for n in main_nodes)
+    card = json.loads((ROOT / "cards/dingtalk-approval-top-card.json").read_text())
+    editor = json.loads(card["editorData"])
     nodes = {n["id"]: n for n in walk(editor["schema"]["componentsTree"][0])}
+    native = ET.fromstring(card["widgetInfo"])
+    assert set(nodes) == {x.get("userId") for x in native.iter() if x.get("userId")}
+    assert editor["extension"]["extendType"] == "NORMAL"
+    assert editor["schema"]["componentsTree"][0]["componentName"] == "Card"
     variables = {v["name"]: v for v in editor["variableList"]}
     assert all(variables[k]["private"] for k in APPROVAL_FIELDS)
-    assert variables["approvalBody"]["type"] == variables["approvalDetail"]["type"] == "string"
-    native = ET.fromstring(card["widgetInfo"])
-    for phase in (2, 3):
-        prefix = f"qpai_p{phase}_"
-        body = nodes[prefix + "body"]
-        assert prefix + "approval" in [c["id"] for c in body["children"]]
-        assert nodes[prefix + "approval_allow_button"]["props"]["color"]["value"] == "blue"
-        assert nodes[prefix + "approval_deny_button"]["props"]["color"]["value"] == "gray"
-        fold = nodes[prefix + "approval_node_ocmac5pte72"]
-        assert fold["props"]["visible"]["condition"]["conditions"][0]["variable"] == "hasApprovalDetail"
-        title = next(x for x in native.iter() if x.get("userId") == prefix + "approval_node_ocmubggnywb9")
-        assert any("cardPrivateData.approvalDetailTitle" in x.get("text", "") for x in title.iter())
-    assert "查看操作详情" not in card["editorData"]
+    assert nodes["qpai_top_approval_allow_button"]["props"]["color"]["value"] == "blue"
+    assert nodes["qpai_top_approval_deny_button"]["props"]["color"]["value"] == "gray"
+    assert editor["mockData"]["cardPrivateData"]["hasApproval"] == "yes"
+    for n in nodes.values():
+        if n["componentName"] == "SingleButton":
+            assert n["props"]["successCondition"]["conditions"][0]["variable"] == "actionResult"
+    import runpy
+    assert runpy.run_path(str(ROOT / "scripts/build_card.py"))["build"](top=True) == card
 
 
 def test_process_loop_has_one_interleaved_event_prototype():
@@ -139,7 +141,7 @@ def test_native_fold_state_is_local_and_reset_at_completion():
         assert header["props"]["actionType"] == "setLocalState"
     native = ET.fromstring(card["widgetInfo"])
     local_actions = [x.get("onTap") for x in native.iter() if "'localData'" in x.get("onTap", "")]
-    assert len(local_actions) == 4
+    assert len(local_actions) == 2
     assert all("actionType" not in tap for tap in local_actions)
 
 

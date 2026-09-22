@@ -4,7 +4,7 @@ from fastapi import APIRouter, Request, HTTPException, Body
 from fastapi.responses import FileResponse
 
 router = APIRouter()
-FIELDS = {"enabled", "client_id", "client_secret", "card_template_id", "robot_code",
+FIELDS = {"enabled", "client_id", "client_secret", "card_template_id", "top_template_id", "robot_code",
           "require_mention", "retention_days", "page_bytes", "dm_policy", "group_policy", "allow_from"}
 
 
@@ -44,7 +44,7 @@ async def put_config(request: Request, body: dict = Body(...)):
     if not body.get("client_secret"):
         # Never accidentally carry an old bot's secret to a new Client ID.
         config["client_secret"] = old.get("client_secret", "") if config.get("client_id") == old.get("client_id") else ""
-    for key in ("client_id", "client_secret", "card_template_id", "robot_code"):
+    for key in ("client_id", "client_secret", "card_template_id", "top_template_id", "robot_code"):
         config[key] = str(config.get(key) or "").strip()
     if config.get("enabled") and not all(config.get(k) for k in ("client_id", "client_secret", "card_template_id")):
         raise HTTPException(422, "启用前请填写 Client ID、Client Secret 和已发布的卡片模板 ID")
@@ -70,3 +70,9 @@ async def put_config(request: Request, body: dict = Body(...)):
 async def template():
     return FileResponse(Path(__file__).parent / "cards" / "dingtalk-ai-card.json",
                         media_type="application/json", filename="dingtalk-ai-card.json")
+
+
+@router.get("/top-template")
+async def top_template():
+    return FileResponse(Path(__file__).parent / "cards" / "dingtalk-approval-top-card.json",
+                        media_type="application/json", filename="dingtalk-approval-top-card.json")

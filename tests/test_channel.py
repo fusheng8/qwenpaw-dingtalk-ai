@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 from qpai.channel import DingTalkAIChannel
 from qpai.state import Turn, project
+from qpai.transport import CardTransport
 
 
 @pytest.fixture
@@ -14,8 +15,9 @@ def channel(tmp_path):
         if False:
             yield None
     ch = DingTalkAIChannel.from_config(process, NS(enabled=False, client_id="test", client_secret="not-a-secret",
-        card_template_id="template"), workspace_dir=tmp_path)
-    ch.transport = NS(create=AsyncMock(), update=AsyncMock(), stream=AsyncMock(), close=AsyncMock())
+        card_template_id="template", top_template_id="top-template"), workspace_dir=tmp_path)
+    ch.transport = NS(create=AsyncMock(), update=AsyncMock(), stream=AsyncMock(), close=AsyncMock(), open_top=AsyncMock(), update_top=AsyncMock(), close_top=AsyncMock(), top_id=CardTransport.top_id)
+    ch.schedule_tops = lambda: None  # Reconcile explicitly for deterministic lifecycle tests.
     ch._send_emotion = AsyncMock()
     yield ch
     ch.store.close()
@@ -27,7 +29,7 @@ def request(message="m1"):
 
 
 def callback(turn, action, **params):
-    return {"outTrackId": turn.id, "userId": "staff", "content": json.dumps({"cardPrivateData": {
+    return {"outTrackId": turn.id + ("_approval" if action in {"approve", "deny", "approval_page"} else ""), "userId": "staff", "content": json.dumps({"cardPrivateData": {
         "params": {"turn_id": turn.id, "action": action, **params}}})}
 
 
@@ -147,7 +149,7 @@ async def test_callbacks_reject_other_users_and_wrong_turn(channel):
     assert result["userPrivateData"]["cardParamMap"]["actionResult"] == "error"
     event = callback(turn, "approve", approval_id="unknown")
     result = await channel.card_callback(event)
-    assert "已过期" in result["userPrivateData"]["cardParamMap"]["detailBody"]
+    assert "已关闭" in result["userPrivateData"]["cardParamMap"]["detailBody"]
     assert result["userPrivateData"]["cardParamMap"]["actionResult"] == "error"
     success = await channel.card_callback(callback(turn, "close"))
     assert success["userPrivateData"]["cardParamMap"]["actionResult"] == "ok"
@@ -178,6 +180,7 @@ async def test_approval_resolves_exact_request_once(channel, monkeypatch):
     monkeypatch.setattr(service, "get_approval_service", lambda: fake)
     await channel.send_approval_notification(session_id="session", user_id="user", request_id="approval1",
         tool_name="shell", severity="high", result_summary="运行部署命令")
+    await channel.sync_tops()
     assert turn.approvals["approval1"]["arguments"] == {"command": "python report.py", "cwd": "/data"}
     page = await channel.card_callback(callback(turn, "approval_page", approval_id="approval1", page="0"))
     assert page["userPrivateData"]["cardParamMap"]["approvalTarget"] == "python report.py"
@@ -287,3 +290,154 @@ async def test_inline_paging_updates_result_in_place_without_new_card(channel):
     assert "processRows" not in response["cardData"]["cardParamMap"]
     assert rows[0]["navigation"][0]["action"] == "inline_page"
     channel.transport.create.assert_awaited_once()
+
+
+def add_top_approval(channel, key="top-turn", approval_id="a", created=1):
+    t = Turn(key, "s", "user", "staff", "conversation", delivered=True, status="waiting", created=created)
+    t.approvals[approval_id] = {"id": approval_id, "status": "pending", "summary": "请确认这次读取操作", "tool_name": "Bash", "arguments": {"command": "pwd"}}
+    channel.turns[t.id] = t
+    channel.store.save(t)
+    return t
+
+
+@pytest.mark.asyncio
+async def test_top_queue_switches_without_extra_message_and_closes(channel):
+    first = add_top_approval(channel, "first", created=1)
+    second = add_top_approval(channel, "second", created=2)
+    await channel.sync_tops()
+    assert first.top_active and not second.top_active
+    channel.transport.open_top.assert_awaited_once()
+    assert channel.transport.open_top.await_args.args[0].id == first.id
+    assert channel.card_view(first)["hasApproval"] == "no"
+    assert channel.card_view(first)["approvalAllow"] == "[]"
+    first.approvals["a"]["status"] = "denied"
+    await channel.sync_tops()
+    channel.transport.close_top.assert_awaited_once_with(first)
+    assert not first.top_active and second.top_active
+    second.status = "cancelled"
+    await channel.sync_tops()
+    assert not second.top_active
+    assert channel.transport.close_top.await_count == 2
+    channel.transport.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_next_approval_updates_existing_top_and_unchanged_view_skips_write(channel):
+    t = add_top_approval(channel)
+    t.approvals["b"] = {**t.approvals["a"], "id": "b"}
+    await channel.sync_tops()
+    await channel.sync_tops()
+    channel.transport.update_top.assert_not_awaited()
+    t.approvals["a"]["status"] = "approved"
+    await channel.sync_tops()
+    channel.transport.open_top.assert_awaited_once()
+    channel.transport.close_top.assert_not_awaited()
+    data = channel.transport.update_top.await_args.args[1]
+    assert json.loads(data["approvalAllow"])[0]["approval_id"] == "b"
+
+
+@pytest.mark.asyncio
+async def test_failed_top_delivery_stays_pending_and_retries(channel):
+    t = add_top_approval(channel)
+    channel.transport.open_top.side_effect = [RuntimeError("network"), {}]
+    await channel.sync_tops()
+    assert t.pending() and t.top_error and not t.top_created
+    assert channel.card_view(t)["approvalAllow"] == "[]"
+    await channel.sync_tops()
+    assert t.top_created and not t.top_error
+    assert channel.transport.open_top.await_count == 2
+    await asyncio.gather(*channel.flush_tasks.values())
+
+
+@pytest.mark.asyncio
+async def test_missing_template_keeps_request_unapproved(channel):
+    channel.top_template_id = ""
+    t = add_top_approval(channel)
+    await channel.sync_tops()
+    assert "模板 ID" in channel.card_view(t)["approvalNotice"]
+    channel.transport.open_top.assert_not_awaited()
+    assert t.pending()
+    await asyncio.gather(*channel.flush_tasks.values())
+
+
+@pytest.mark.asyncio
+async def test_close_failure_blocks_next_top_until_retry(channel):
+    first = add_top_approval(channel, "first", created=1)
+    second = add_top_approval(channel, "second", created=2)
+    await channel.sync_tops()
+    first.approvals["a"]["status"] = "denied"
+    channel.transport.close_top.side_effect = [RuntimeError("network"), {}]
+    await channel.sync_tops()
+    assert first.top_active and not second.top_active
+    await channel.sync_tops()
+    assert not first.top_active and second.top_active
+    await asyncio.gather(*channel.flush_tasks.values())
+
+
+@pytest.mark.asyncio
+async def test_recovery_closes_persisted_top_even_if_main_card_finalized(channel):
+    import time
+    t = add_top_approval(channel)
+    t.top_active = t.top_created = t.finalized = True
+    t.top_expires = time.time() + 600
+    channel.store.save(t)
+    channel.turns.clear()
+    await channel._recover_active_cards()
+    restored = channel.store.get(t.id)
+    assert restored.status == "interrupted" and not restored.top_active
+    channel.transport.close_top.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_main_card_and_wrong_user_cannot_approve_top(channel, monkeypatch):
+    from qwenpaw.app.approvals import service
+    fake = NS(get_request=AsyncMock(), resolve_request=AsyncMock())
+    monkeypatch.setattr(service, "get_approval_service", lambda: fake)
+    t = add_top_approval(channel)
+    await channel.sync_tops()
+    event = callback(t, "approve", approval_id="a")
+    event["outTrackId"] = t.id
+    result = await channel.card_callback(event)
+    assert result["userPrivateData"]["cardParamMap"]["actionResult"] == "error"
+    event["outTrackId"] = t.id + "_approval"
+    event["userId"] = "other"
+    result = await channel.card_callback(event)
+    assert result["userPrivateData"]["cardParamMap"]["actionResult"] == "error"
+    fake.resolve_request.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_top_worker_wakes_for_resolution(channel):
+    t = add_top_approval(channel)
+    DingTalkAIChannel.schedule_tops(channel)
+    for _ in range(20):
+        await asyncio.sleep(.01)
+        if t.top_created: break
+    assert t.top_created
+    t.approvals["a"]["status"] = "denied"
+    DingTalkAIChannel.schedule_tops(channel)
+    await asyncio.wait_for(channel.top_task, timeout=1)
+    assert not t.top_active
+
+
+@pytest.mark.asyncio
+async def test_clear_failure_still_attempts_close(channel):
+    t = add_top_approval(channel)
+    await channel.sync_tops()
+    t.approvals["a"]["status"] = "denied"
+    channel.transport.update_top.side_effect = RuntimeError("update denied")
+    await channel.sync_tops()
+    channel.transport.close_top.assert_awaited_once()
+    assert not t.top_active
+
+
+@pytest.mark.asyncio
+async def test_expired_server_lease_does_not_block_next_request(channel):
+    first = add_top_approval(channel, "first", created=1)
+    second = add_top_approval(channel, "second", created=2)
+    first.top_active = first.top_created = True
+    first.top_expires = 1
+    first.status = "interrupted"
+    await channel.sync_tops()
+    assert not first.top_active and second.top_active
+    channel.transport.close_top.assert_not_awaited()

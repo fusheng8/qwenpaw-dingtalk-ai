@@ -11,6 +11,7 @@ class DingTalkAIPlugin:
                 {"name": "client_id", "label": "Client ID / AppKey", "type": "text", "required": True},
                 {"name": "client_secret", "label": "Client Secret / AppSecret", "type": "password", "required": True},
                 {"name": "card_template_id", "label": "已发布的 AI 卡片模板 ID", "type": "text", "required": True},
+                {"name": "top_template_id", "label": "审批吊顶模板 ID（工具审批必填）", "type": "text"},
                 {"name": "robot_code", "label": "Robot Code（留空使用 Client ID）", "type": "text"},
                 {"name": "require_mention", "label": "群聊需要 @ 机器人", "type": "switch", "default": True},
                 {"name": "retention_days", "label": "过程记录保留天数", "type": "number", "default": 30},

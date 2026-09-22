@@ -40,12 +40,12 @@ class CardTransport:
                 self.expires = time.monotonic() + max(1, int(body.get("expireIn", 7200)) - 120)
                 return self.token
 
-    async def request(self, method, path, data):
+    async def request(self, method, path, data, *, query=False):
         for attempt in range(4):
             try:
                 token = await self.access_token()
                 async with self.http.request(method, "https://api.dingtalk.com" + path,
-                        headers={"x-acs-dingtalk-access-token": token}, json=data) as response:
+                        headers={"x-acs-dingtalk-access-token": token}, **({"params": data} if query else {"json": data})) as response:
                     body = await response.json(content_type=None)
                     if response.status < 300 and body.get("success") is not False:
                         return body
@@ -98,3 +98,41 @@ class CardTransport:
             "content": content or "正在处理…", "isFull": True, "isFinalize": final,
             # Keep errors in the completed layout so history remains accessible.
             "isError": False})
+
+    @staticmethod
+    def top_id(turn):
+        return turn.id + "_approval"
+
+    @staticmethod
+    def check_delivery(body):
+        results = (body.get("result") or {}).get("deliverResults", [])
+        if any(item.get("success") is False for item in results):
+            raise CardAPIError("吊顶投放失败：请检查会话是否支持吊顶及应用权限")
+
+    async def open_top(self, turn, data, template_id):
+        if not template_id or not turn.staff_id or not turn.conversation_id:
+            raise CardAPIError("请填写审批吊顶模板 ID，并确认消息包含会话和发起者 ID")
+        delivery = {
+            "outTrackId": self.top_id(turn), "userIdType": 1,
+            "openSpaceId": f"dtv1.card//ONE_BOX.{turn.conversation_id}",
+            "topOpenDeliverModel": {"expiredTimeMillis": int(turn.top_expires * 1000),
+                "userIds": [turn.staff_id], "platforms": ["android", "ios", "win", "mac"]}}
+        if turn.top_created:
+            await self.update_top(turn, data)
+            result = await self.request("POST", "/v1.0/card/instances/deliver", delivery)
+        else:
+            result = await self.request("POST", "/v1.0/card/instances/createAndDeliver", {
+                **delivery, "cardTemplateId": template_id, "callbackType": "STREAM",
+                "topOpenSpaceModel": {"spaceType": "ONE_BOX"}, **self.card_data(turn, data)})
+        self.check_delivery(result)
+        return result
+
+    async def update_top(self, turn, data):
+        return await self.request("PUT", "/v1.0/card/instances", {
+            "outTrackId": self.top_id(turn), "userIdType": 1, **self.card_data(turn, data),
+            "cardUpdateOptions": {"updateCardDataByKey": True, "updatePrivateDataByKey": True}})
+
+    async def close_top(self, turn):
+        # Official SDK sends query parameters, not a JSON body.
+        return await self.request("POST", "/v1.0/card/tops/close", {
+            "openConversationId": turn.conversation_id, "outTrackId": self.top_id(turn)}, query=True)

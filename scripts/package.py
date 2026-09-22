@@ -10,7 +10,7 @@ version = manifest["version"]
 out = ROOT / "dist"
 out.mkdir(exist_ok=True)
 files = ["plugin.json", "__init__.py", "plugin.py", "channel.py", "state.py", "transport.py", "routes.py",
-         "ui/index.js", "cards/dingtalk-ai-card.json", "README.md", "LICENSE"]
+         "ui/index.js", "cards/dingtalk-ai-card.json", "cards/dingtalk-approval-top-card.json", "README.md", "LICENSE"]
 archive = out / f"dingtalk-ai-{version}.zip"
 with ZipFile(archive, "w", compression=ZIP_DEFLATED) as z:
     for name in sorted(files):
@@ -20,5 +20,7 @@ with ZipFile(archive, "w", compression=ZIP_DEFLATED) as z:
         z.writestr(info, (ROOT / name).read_bytes())
 card = out / "dingtalk-ai-card.json"
 card.write_bytes((ROOT / "cards/dingtalk-ai-card.json").read_bytes())
-(out / "SHA256SUMS").write_text("".join(f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n" for p in [archive, card]))
+top = out / "dingtalk-approval-top-card.json"
+top.write_bytes((ROOT / "cards/dingtalk-approval-top-card.json").read_bytes())
+(out / "SHA256SUMS").write_text("".join(f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n" for p in [archive, card, top]))
 print(archive)

@@ -61,3 +61,37 @@ async def test_stream_is_the_only_answer_writer():
     await api.update(t, {"content": "partial", "finalContent": "final"})
     data = api.request.await_args.args[2]["cardData"]["cardParamMap"]
     assert "content" not in data and data["finalContent"] == "final"
+
+
+@pytest.mark.asyncio
+async def test_top_delivery_private_scope_reopen_and_close_query():
+    api = CardTransport("app", "placeholder", "main-template")
+    api.request = AsyncMock(return_value={"success": True, "result": {"deliverResults": [{"success": True}]}})
+    t = Turn("t", "s", "u", "staff", "conversation", top_expires=2000000000)
+    await api.open_top(t, {"approvalTarget": "private command", "hasApproval": "yes"}, "top-template")
+    payload = api.request.await_args.args[2]
+    assert payload["outTrackId"] == "t_approval"
+    assert payload["cardTemplateId"] == "top-template"
+    assert payload["openSpaceId"] == "dtv1.card//ONE_BOX.conversation"
+    assert payload["callbackType"] == "STREAM"
+    assert payload["topOpenDeliverModel"]["userIds"] == ["staff"]
+    assert payload["topOpenDeliverModel"]["expiredTimeMillis"] == 2000000000000
+    assert payload["cardData"]["cardParamMap"] == {}
+    assert payload["privateData"]["staff"]["cardParamMap"]["approvalTarget"] == "private command"
+    t.top_created = True
+    await api.open_top(t, {}, "top-template")
+    assert api.request.await_args.args[1] == "/v1.0/card/instances/deliver"
+    await api.close_top(t)
+    api.request.assert_awaited_with("POST", "/v1.0/card/tops/close", {
+        "openConversationId": "conversation", "outTrackId": "t_approval"}, query=True)
+
+
+@pytest.mark.asyncio
+async def test_top_nested_delivery_failure_is_not_success():
+    from qpai.transport import CardAPIError
+    api = CardTransport("app", "placeholder", "template")
+    api.request = AsyncMock(return_value={"success": True, "result": {"deliverResults": [{"success": False}]}})
+    with pytest.raises(CardAPIError, match="吊顶投放失败"):
+        await api.open_top(Turn("t", "s", "u", "staff", "c"), {}, "top-template")
+    with pytest.raises(CardAPIError):
+        await api.open_top(Turn("t", "s", "u", "", "c"), {}, "top-template")

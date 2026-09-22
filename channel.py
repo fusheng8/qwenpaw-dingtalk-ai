@@ -13,7 +13,7 @@ import dingtalk_stream
 from qwenpaw.app.channels.dingtalk.channel import DingTalkChannel
 from qwenpaw.config import get_config_path
 
-from .state import Store, Turn, TERMINAL, PRIVATE_FIELDS, identity, project, detail, text, tool_result_status
+from .state import Store, Turn, TERMINAL, PRIVATE_FIELDS, APPROVAL_FIELDS, identity, project, detail, text, tool_result_status
 from .transport import CardTransport
 
 logger = logging.getLogger(__name__)
@@ -45,10 +45,16 @@ class CardCallback(dingtalk_stream.CallbackHandler):
 class DingTalkAIChannel(DingTalkChannel):
     channel = "dingtalk_ai"
 
-    def __init__(self, *args, retention_days=30, page_bytes=1800, **kwargs):
+    def __init__(self, *args, retention_days=30, page_bytes=1800, top_template_id="", **kwargs):
         kwargs.update(message_type="card", streaming_enabled=True, no_text_debounce=True,
                       share_session_in_group=False, card_template_key="content")
         super().__init__(*args, **kwargs)
+        self.top_template_id = str(top_template_id).strip()
+        self.top_lock = asyncio.Lock()
+        self.top_event = asyncio.Event()
+        self.top_task = None
+        self.top_views = {}
+        self.stopping = False
         self.retention_days = max(1, min(int(retention_days), 365))
         self.page_bytes = max(512, min(int(page_bytes), 2400))
         directory = (self._workspace_dir or get_config_path().parent) / "dingtalk-ai"
@@ -69,7 +75,7 @@ class DingTalkAIChannel(DingTalkChannel):
         return cls(process=process, enabled=get("enabled", False),
             client_id=get("client_id", ""), client_secret=get("client_secret", ""),
             bot_prefix=get("bot_prefix", ""), card_template_id=get("card_template_id", ""),
-            robot_code=get("robot_code", ""), workspace_dir=workspace_dir,
+            robot_code=get("robot_code", ""), top_template_id=get("top_template_id", ""), workspace_dir=workspace_dir,
             on_reply_sent=on_reply_sent, display_config=display_config,
             require_mention=get("require_mention", True),
             dm_policy=get("dm_policy", "open"), group_policy=get("group_policy", "open"),
@@ -174,7 +180,7 @@ class DingTalkAIChannel(DingTalkChannel):
     async def flush(self, turn):
         async with self.locks.setdefault(turn.id, asyncio.Lock()):
             await self.sync_reaction(turn)
-            data = project(turn, page_bytes=self.page_bytes)
+            data = self.card_view(turn)
             final = turn.status in TERMINAL
             self.store.save(turn)
             if not turn.delivered:
@@ -191,6 +197,103 @@ class DingTalkAIChannel(DingTalkChannel):
                     turn.finalized = True
                     self.store.save(turn)
             self.last_flush[turn.id] = time.monotonic()
+            self.schedule_tops()
+
+    def card_view(self, turn, *, top=False):
+        data = project(turn, page_bytes=self.page_bytes)
+        if top:
+            return {key: value for key, value in data.items() if key in APPROVAL_FIELDS}
+        # Also clears approvals on previously imported main-card templates.
+        for key in APPROVAL_FIELDS:
+            data[key] = "[]" if key in {"approvalButtons", "approvalAllow", "approvalDeny", "approvalPages"} else "no" if key.startswith("has") else ""
+        data["approvalNotice"] = turn.top_error
+        if not turn.top_error and turn.pending() and turn.status not in TERMINAL:
+            data["approvalNotice"] = "等待你的确认，请在会话顶部处理；多项请求将依次显示。"
+        return data
+
+    def schedule_tops(self):
+        if self.stopping:
+            return
+        self.top_event.set()
+        if self.top_task and not self.top_task.done():
+            return
+        async def worker():
+            while not self.stopping:
+                self.top_event.clear()
+                try:
+                    active = await self.sync_tops()
+                except Exception:
+                    logger.exception("Approval ceiling reconciliation failed")
+                    active = True
+                if not active and not self.top_event.is_set():
+                    return
+                try:
+                    await asyncio.wait_for(self.top_event.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    pass
+        self.top_task = asyncio.create_task(worker())
+
+    async def sync_tops(self):
+        """Serialize the visible request per conversation/recipient; retry cleanup.
+
+        Persist intent before network I/O. Ten-minute server expiry bounds stale
+        ceilings after crashes; live requests renew their lease every five minutes.
+        """
+        async with self.top_lock:
+            known = {t.id: t for t in self.store.approval_turns()}
+            known.update(self.turns)
+            turns = sorted(known.values(), key=lambda t: (t.created, t.id))
+            selected = {}
+            for t in turns:
+                if not self.stopping and t.delivered and t.pending() and t.status not in TERMINAL:
+                    selected.setdefault((t.conversation_id, t.staff_id), t.id)
+            active = False
+            blocked = set()
+            for t in sorted(turns, key=lambda t: selected.get((t.conversation_id, t.staff_id)) == t.id):
+                key = (t.conversation_id, t.staff_id)
+                wanted = selected.get(key) == t.id
+                old_error = t.top_error
+                try:
+                    if t.top_active and not wanted:
+                        # Clear controls before closure, including delayed/retried closes.
+                        if t.top_expires > time.time():
+                            if t.top_created:
+                                try:
+                                    await self.transport.update_top(t, self.card_view(t, top=True))
+                                except Exception:
+                                    logger.warning("Could not clear ceiling before close: %s", t.id)
+                            await self.transport.close_top(t)
+                        t.top_active = False
+                        self.top_views.pop(t.id, None)
+                    if wanted:
+                        active = True
+                        if key in blocked:
+                            continue
+                        if not self.top_template_id:
+                            raise ValueError("请在钉钉 AI 设置中填写审批吊顶模板 ID；本次操作尚未获准执行。")
+                        data = self.card_view(t, top=True)
+                        fingerprint = json.dumps(data, sort_keys=True)
+                        if not t.top_active or t.top_expires < time.time() + 300 or not t.top_created:
+                            t.top_active = True
+                            t.top_expires = time.time() + 600
+                            self.store.save(t)
+                            await self.transport.open_top(t, data, self.top_template_id)
+                            t.top_created = True
+                            self.top_views[t.id] = fingerprint
+                        elif self.top_views.get(t.id) != fingerprint:
+                            await self.transport.update_top(t, data)
+                            self.top_views[t.id] = fingerprint
+                    t.top_error = ""
+                except Exception as exc:
+                    active = True
+                    blocked.add(key)
+                    t.top_error = (str(exc) if isinstance(exc, ValueError) else
+                        "审批吊顶暂时无法显示或关闭，正在重试。请检查吊顶模板、应用权限与会话支持情况；尚未批准的操作不会执行。")
+                    logger.warning("Approval ceiling sync failed for %s: %s", t.id, type(exc).__name__)
+                self.store.save(t)
+                if old_error != t.top_error and not self.stopping:
+                    self.changed(t)
+            return active or any(t.top_active for t in turns)
 
     async def sync_reaction(self, turn):
         """Reuse the official best-effort reaction API on the inbound message.
@@ -218,6 +321,8 @@ class DingTalkAIChannel(DingTalkChannel):
     def changed(self, turn):
         turn.touch()
         self.store.save(turn)
+        if turn.top_active or turn.pending():
+            self.schedule_tops()
         task = self.flush_tasks.get(turn.id)
         if task and not task.done():
             return
@@ -344,6 +449,8 @@ class DingTalkAIChannel(DingTalkChannel):
         self.locks.pop(turn.id, None)
         self.last_flush.pop(turn.id, None)
         self.last_stream.pop(turn.id, None)
+        await self.sync_tops()
+        self.schedule_tops()
         self.store.prune(self.retention_days)
 
     async def _on_consume_error(self, request, to_handle, err_text):
@@ -435,7 +542,9 @@ class DingTalkAIChannel(DingTalkChannel):
     async def card_callback(self, payload):
         turn = None
         try:
-            turn_id = str(payload.get("outTrackId") or "")
+            card_id = str(payload.get("outTrackId") or "")
+            is_top = card_id.endswith("_approval")
+            turn_id = card_id[:-9] if is_top else card_id
             turn = self.turns.get(turn_id) or self.store.get(turn_id)
             if not turn or turn.agent_id != self.agent_id:
                 raise ValueError("记录已过期或不属于当前智能体")
@@ -448,13 +557,19 @@ class DingTalkAIChannel(DingTalkChannel):
             if not turn.staff_id or str(payload.get("userId") or "") != turn.staff_id:
                 raise ValueError("只有发起本轮对话的用户可以操作此卡片")
             action = params.get("action")
+            if is_top and (card_id != self.transport.top_id(turn) or not turn.top_active):
+                raise ValueError("审批吊顶已关闭")
+            if action in {"approve", "deny", "approval_page"} and not is_top:
+                raise ValueError("请在会话顶部审批，原消息内的审批入口已停用")
+            if is_top and action not in {"approve", "deny", "approval_page", "close"}:
+                raise ValueError("此操作不属于审批吊顶")
             if action == "thought_toggle":
                 key = str(params.get("step_id") or "")
                 if not any(s.id == key and s.kind in {"reasoning", "progress"} for s in turn.steps):
                     raise ValueError("思考记录不存在或已过期")
                 turn.view_pages["_thought:" + key] = 1 if str(params.get("page")) == "1" else 0
                 self.store.save(turn)
-                return self.callback_response(public=project(turn, page_bytes=self.page_bytes))
+                return self.callback_response(public=self.card_view(turn, top=is_top))
             if action == "approval_page":
                 approval_id = str(params.get("approval_id") or "")
                 current = next(iter(turn.pending()), None) if turn.status not in TERMINAL else None
@@ -462,19 +577,22 @@ class DingTalkAIChannel(DingTalkChannel):
                     raise ValueError("审批内容已经更新，请查看当前操作")
                 turn.view_pages["approval:" + approval_id] = max(0, int(params.get("page", 0)))
                 self.store.save(turn)
-                return self.callback_response(public=project(turn, page_bytes=self.page_bytes))
+                return self.callback_response(public=self.card_view(turn, top=is_top))
             if action in {"inline_page", "process_page"}:
                 key = str(params.get("step_id") or "") if action == "inline_page" else "_process"
                 if action == "inline_page" and not any(s.id == key for s in turn.steps):
                     raise ValueError("过程记录不存在或已过期")
                 turn.view_pages[key] = max(0, int(params.get("page", 0)))
                 self.store.save(turn)
-                return self.callback_response(public=project(turn, page_bytes=self.page_bytes))
+                return self.callback_response(public=self.card_view(turn, top=is_top))
             if action in {"approve", "deny"}:
                 from qwenpaw.app.approvals.service import get_approval_service
                 from qwenpaw.security.tool_guard.approval import ApprovalDecision, ApprovalScope
                 approval_id = str(params.get("approval_id") or "")
                 approval = turn.approvals.get(approval_id)
+                current = next(iter(turn.pending()), None)
+                if not current or current["id"] != approval_id:
+                    raise ValueError("审批已过期或不是当前待确认操作")
                 pending = await get_approval_service().get_request(approval_id)
                 if (not approval or approval["status"] != "pending" or turn.status in TERMINAL
                     or not pending or pending.channel != self.channel or pending.user_id != turn.user_id
@@ -491,7 +609,8 @@ class DingTalkAIChannel(DingTalkChannel):
                 turn.touch()
                 self.store.save(turn)
                 self.changed(turn)
-                return self.callback_response(public=project(turn, page_bytes=self.page_bytes), private={"detailVisible": "no"})
+                self.schedule_tops()
+                return self.callback_response(public=self.card_view(turn, top=is_top), private={"detailVisible": "no"})
             if action == "close":
                 return self.callback_response(private={"detailVisible": "no"})
             if action not in {"history", "step", "answer"}:
@@ -522,6 +641,8 @@ class DingTalkAIChannel(DingTalkChannel):
                     await self.flush(turn)
                 except Exception:
                     logger.exception("Could not mark interrupted card %s", turn.id)
+        await self.sync_tops()
+        self.schedule_tops()
         self.store.prune(self.retention_days)
 
     async def start(self):
@@ -537,6 +658,10 @@ class DingTalkAIChannel(DingTalkChannel):
             raise
 
     async def stop(self):
+        self.stopping = True
+        if self.top_task:
+            self.top_task.cancel()
+            await asyncio.gather(self.top_task, return_exceptions=True)
         for task in [*self.flush_tasks.values(), *self.watchers]:
             task.cancel()
         await asyncio.gather(*self.flush_tasks.values(), *self.watchers, return_exceptions=True)
@@ -554,6 +679,7 @@ class DingTalkAIChannel(DingTalkChannel):
                         await self.flush(turn)
                     except Exception:
                         logger.exception("Could not finalize card on stop")
+        await self.sync_tops()
         await super().stop()
         await self.transport.close()
         self.store.close()
