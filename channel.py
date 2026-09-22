@@ -13,7 +13,7 @@ import dingtalk_stream
 from qwenpaw.app.channels.dingtalk.channel import DingTalkChannel
 from qwenpaw.config import get_config_path
 
-from .state import Store, Turn, TERMINAL, identity, project, detail, text
+from .state import Store, Turn, TERMINAL, PRIVATE_FIELDS, identity, project, detail, text
 from .transport import CardTransport
 
 logger = logging.getLogger(__name__)
@@ -340,11 +340,19 @@ class DingTalkAIChannel(DingTalkChannel):
         if not turn or turn.status in TERMINAL:
             raise RuntimeError("审批没有对应的活动卡片")
         turn.status = "waiting"
+        pending = await get_approval_service().get_request(request_id)
+        extra = getattr(pending, "extra", {}) if pending else {}
+        extra = extra if isinstance(extra, dict) else {}
+        call = extra.get("tool_call") or {}
+        args = call.get("input") if isinstance(call, dict) else None
+        if not isinstance(args, dict):
+            args = extra.get("input")
+        if not isinstance(args, dict):
+            args = {k: extra[k] for k in ("command", "cwd", "permissions", "blocked_path") if extra.get(k)}
         turn.approvals[request_id] = {"id": request_id, "title": f"审批 · {tool_name} · {severity}",
-            "summary": result_summary, "status": "pending"}
+            "summary": result_summary, "status": "pending", "tool_name": tool_name, "arguments": args}
         turn.step("approval:" + request_id, "approval", f"审批详情 · {tool_name}").content = result_summary
         self.changed(turn)
-        pending = await get_approval_service().get_request(request_id)
         if pending:
             async def watch():
                 try:
@@ -365,8 +373,8 @@ class DingTalkAIChannel(DingTalkChannel):
         private = dict(private or {})
         if public is not None:
             public = dict(public)
-            if "processRows" in public:
-                private["processRows"] = public.pop("processRows")
+            for key in PRIVATE_FIELDS & public.keys():
+                private[key] = public.pop(key)
             result["cardData"] = {"cardParamMap": public}
         result["userPrivateData"] = {"cardParamMap": {
             **(private or {}), "actionResult": "ok" if success else "error"}}
@@ -388,6 +396,14 @@ class DingTalkAIChannel(DingTalkChannel):
             if not turn.staff_id or str(payload.get("userId") or "") != turn.staff_id:
                 raise ValueError("只有发起本轮对话的用户可以操作此卡片")
             action = params.get("action")
+            if action == "approval_page":
+                approval_id = str(params.get("approval_id") or "")
+                current = next(iter(turn.pending()), None) or next(iter(reversed(turn.approvals.values())), None)
+                if not current or current["id"] != approval_id:
+                    raise ValueError("审批内容已经更新，请查看当前操作")
+                turn.view_pages["approval:" + approval_id] = max(0, int(params.get("page", 0)))
+                self.store.save(turn)
+                return self.callback_response(public=project(turn, page_bytes=self.page_bytes))
             if action in {"inline_page", "process_page"}:
                 key = str(params.get("step_id") or "") if action == "inline_page" else "_process"
                 if action == "inline_page" and not any(s.id == key for s in turn.steps):

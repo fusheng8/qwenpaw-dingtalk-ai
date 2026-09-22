@@ -9,8 +9,12 @@ from xml.etree import ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 PRIVATE = {"detailTitle", "detailBody", "detailButtons", "detailVisible", "detailEpoch", "actionResult", "processRows"}
-MARKDOWN = {"content", "thought", "approvalBody", "detailBody"}
+PRIVATE.update({"approvalTitle", "approvalBody", "approvalButtons", "approvalAllow", "approvalDeny",
+    "approvalDetail", "approvalDetailTitle", "approvalPages", "approvalTarget", "hasApprovalTarget",
+    "hasApprovalDetail", "hasApproval", "approvalHint", "approvalOperation"})
+MARKDOWN = {"content", "thought", "detailBody"}
 LISTS = {"controls", "processNavigation", "approvalButtons", "detailButtons"}
+LISTS.update({"approvalAllow", "approvalDeny", "approvalPages"})
 BUTTON_KEYS = ("text", "action", "turn_id", "step_id", "approval_id", "page")
 NAMES = {"status", "phase", "turnId", "epoch", "lastMessage", "flowStatus", "approvalTitle", "hasApproval", "processTitle", "processRows", "hasProcess", *PRIVATE, *MARKDOWN, *LISTS}
 components = set()
@@ -80,13 +84,22 @@ def wrap(key, *conditions):
     return n, x
 
 
-def label(key, field):
+def label(key, field, *, bold=False, muted=False):
     n = node("BaseText", key, {"text": string("${" + field + "}"), "showIcon": False,
+        "maxLine": {"type": "dynamicNumber", "valueType": "fixed", "value": 10000},
         "marginLeft": 12, "marginRight": 12, "marginTop": 6, "marginBottom": 6,
-        "visible": visible(), "fontSize": 14})
-    x = xml("FastTextView", userId=n["id"], text=data(field), textSize="14np", lineHeight="22np",
+        "visible": visible(), "fontSize": 14, "bold": bold,
+        "styleType": "custom", "fontSizeType": "Custom", "customFontSize": 13 if muted else 14,
+        "customFontLineHeight": 22,
+        "color": {"type": "dynamicColor", "valueType": "fixed", "value": "common_level3_base_color" if muted else "common_level1_base_color"}})
+    x = xml("FastTextView", userId=n["id"], text=data(field), textSize="14np", lineHeight="22np", maxLines="10000",
         marginLeft="12np", marginRight="12np", marginTop="6np", marginBottom="6np",
         textColor="@dtDarkModeAdapter{'#171A1D','#F5F5F5'}")
+    if bold:
+        x.set("textStyle", "bold")
+    if muted:
+        x.set("textSize", "13np")
+        x.set("textColor", "@dtDarkModeAdapter{'#70757A','#AEB4BC'}")
     return n, x
 
 
@@ -114,10 +127,10 @@ def thinking_text(key):
     return n, x
 
 
-def buttons(key, field, loop=False):
+def buttons(key, field, loop=False, primary=False):
     child = node("SingleButton", key + "_button", {"text": string("${loop.text}"),
         "status": {"type": "dynamicSelect", "valueType": "fixed", "value": "normal"},
-        "color": {"type": "dynamicSelect", "valueType": "fixed", "value": "gray"},
+        "color": {"type": "dynamicSelect", "valueType": "fixed", "value": "blue" if primary else "gray"},
         "actionType": "request", "actionId": string("${loop.action}"),
         "params": [{"id": str(i), "name": k, "type": "variable", "variable": field + "[0]." + k,
                     "variableType": "loop", "value": ""} for i, k in enumerate(BUTTON_KEYS[1:])],
@@ -134,6 +147,10 @@ def buttons(key, field, loop=False):
         borderWidth="1np", borderColor="@dtDarkModeAdapter{'#D8DADD','#54575A'}", onTap=tap)
     button.append(xml("FastTextView", text="@subdata{'text'}", textSize="14np", textGravity="center",
         maxLines="1", lineBreakMode="end", textColor="@dtDarkModeAdapter{'#007FFF','#6CB5FF'}"))
+    if primary:
+        button.set("backgroundColor", "#007FFF")
+        button.set("borderColor", "#007FFF")
+        button[0].set("textColor", "#FFFFFF")
     x.append(button)
     return n, x
 
@@ -142,7 +159,7 @@ def append(pair, child):
     pair[0]["children"].append(child[0]); pair[1].append(child[1])
 
 
-def material_disclosure(prefix, running):
+def material_disclosure(prefix, running, title_field="processTitle", visible_field="hasProcess"):
     """Use the user's exported 展开折叠 material, not CollapsePanel."""
     material = json.loads((ROOT / "scripts/disclosure-material.json").read_text())
     n = material["schema"]
@@ -157,12 +174,16 @@ def material_disclosure(prefix, running):
         node["id"] = ids[old]; components.add(node["componentName"])
         for child in node.get("children", []): prepare(child)
     prepare(n)
-    serialized = json.dumps(n, ensure_ascii=False).replace('nextExpend6', next_var).replace('expend6', local).replace('expendTitle6', 'processTitle')
+    serialized = json.dumps(n, ensure_ascii=False).replace('nextExpend6', next_var).replace('expend6', local).replace('expendTitle6', title_field)
     n = json.loads(serialized)
     for el in x.iter():
         if el.get("userId") in ids: el.set("userId", ids[el.get("userId")])
         for key, value in list(el.attrib.items()):
-            el.set(key, value.replace('expend6', local).replace('expendTitle6', 'processTitle'))
+            el.set(key, value.replace('expend6', local).replace('expendTitle6', title_field))
+    # The exported material title originally reads public cardData.
+    for el in x.iter():
+        for key, value in list(el.attrib.items()):
+            el.set(key, value.replace('data.cardData.' + title_field, 'data.cardPrivateData.' + title_field) if title_field in PRIVATE else value)
     header, body = n["children"]
     # Drop the sample content and put real reasoning and tool links here.
     body["children"] = []
@@ -231,8 +252,8 @@ def material_disclosure(prefix, running):
         if local in v and running:
             eq = "@equal{@toStr{" + data(local) + "},@toStr{'1'}}"
             el.set("visibility", show("@not{" + eq + "}" if "@equal" in v else eq))
-    n["props"]["visible"] = visible(cond("hasProcess"))
-    x.set("visibility", show("@equal{" + data("hasProcess") + ",'yes'}"))
+    n["props"]["visible"] = visible(cond(visible_field))
+    x.set("visibility", show("@equal{" + data(visible_field) + ",'yes'}"))
     return (n, x), (body, bx)
 
 
@@ -331,9 +352,23 @@ def build():
             append(pair, process_panel(prefix, phase == 2))
             append(pair, markdown(prefix + "answer", "content", streaming=phase == 2))
             approval = wrap(prefix + "approval", cond("hasApproval"))
-            append(approval, label(prefix + "approval_title", "approvalTitle"))
-            append(approval, markdown(prefix + "approval_body", "approvalBody"))
-            append(approval, buttons(prefix + "approval_buttons", "approvalButtons"))
+            append(approval, label(prefix + "approval_title", "approvalTitle", bold=True))
+            append(approval, label(prefix + "approval_operation", "approvalOperation", muted=True))
+            target = wrap(prefix + "approval_target", cond("hasApprovalTarget"))
+            append(target, label(prefix + "approval_target_text", "approvalTarget"))
+            append(approval, target)
+            brief = wrap(prefix + "approval_brief", {**cond("approvalBody", ""), "op": "notEqual"})
+            append(brief, label(prefix + "approval_body", "approvalBody"))
+            append(approval, brief)
+            append(approval, buttons(prefix + "approval_allow", "approvalAllow", primary=True))
+            append(approval, buttons(prefix + "approval_deny", "approvalDeny"))
+            hint = wrap(prefix + "approval_hint_wrap", {**cond("approvalHint", ""), "op": "notEqual"})
+            append(hint, label(prefix + "approval_hint", "approvalHint", muted=True))
+            append(approval, hint)
+            fold, fold_body = material_disclosure(prefix + "approval_", False, "approvalDetailTitle", "hasApprovalDetail")
+            append(fold_body, label(prefix + "approval_full", "approvalDetail"))
+            append(fold_body, buttons(prefix + "approval_pages", "approvalPages"))
+            append(approval, fold)
             append(pair, approval)
             append(pair, buttons(prefix + "controls", "controls"))
             expanded = wrap(prefix + "detail", cond("detailVisible"), cond("detailEpoch", "active" if phase == 2 else "done"))
@@ -375,6 +410,14 @@ def build():
         "localList": [{"id": key, "name": key, "type": kind, "private": False, "editorVarType": "localList"} for key, kind in LOCAL.items()], "hsfList": [], "lwpList": [], "extension": {"extendType": "AI", "aiStatusList": [1, 2, 3]}}
     ET.indent(native)
     editor["mockData"]["cardPrivateData"]["processRows"] = editor["mockData"]["cardData"].pop("processRows")
+    mock = editor["mockData"]["cardData"]
+    mock.update(approvalAllow=[mock["approvalButtons"][0]], approvalDeny=[mock["approvalButtons"][1]],
+        approvalTarget="python 分析销售数据.py", hasApprovalTarget="yes", hasApprovalDetail="no",
+        approvalDetail="", approvalDetailTitle="展开完整说明", approvalPages=[],
+        approvalHint="仅允许本次操作，不会自动批准后续操作。", approvalOperation="操作 · 执行数据分析")
+    for key in list(mock):
+        if key in PRIVATE:
+            editor["mockData"]["cardPrivateData"][key] = mock.pop(key)
     for row in editor["mockData"]["cardPrivateData"]["processRows"]:
         row["thoughtText"] = row["body"] if row["kind"] == "thought" else ""
         row.update({"sheetTitle": "工具详情 · 第 1/1 页", "sheetBody": row["body"], "sheetPosition": "single", "turn_id": "preview", "previousPage": "0", "nextPage": "0", "codeBody": "```text\n" + row["body"] + "\n```", "toolName": {"tool1": "Shell", "tool2": "文件读取", "tool3": "客户信息服务"}.get(row["id"], ""),

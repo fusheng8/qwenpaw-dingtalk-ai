@@ -15,6 +15,10 @@ from pathlib import Path
 from typing import Any
 
 TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
+APPROVAL_FIELDS = {"approvalTitle", "approvalBody", "approvalButtons", "approvalAllow", "approvalDeny",
+                   "approvalDetail", "approvalDetailTitle", "approvalPages", "approvalTarget",
+                   "hasApprovalTarget", "hasApprovalDetail", "hasApproval", "approvalHint", "approvalOperation"}
+PRIVATE_FIELDS = {"processRows", *APPROVAL_FIELDS}
 STATUS_LABELS = {"running": "执行中", "completed": "已完成", "failed": "执行失败",
                  "cancelled": "已停止", "interrupted": "已中断", "pending": "待审批",
                  "approved": "已批准", "denied": "已拒绝", "expired": "已过期"}
@@ -201,7 +205,7 @@ def project(turn: Turn, *, page_bytes: int = 1800) -> dict[str, str]:
         "failed": "执行失败", "cancelled": "已停止", "interrupted": "服务已重启，本次执行已中断",
     }.get(turn.status, turn.status)
     # Titles only, with stable IDs. Results never flood the public card.
-    approval = next(iter(turn.pending()), None)
+    approval = next(iter(turn.pending()), None) or next(iter(reversed(turn.approvals.values())), None)
     controls = []
     if len(answer_pages) > 1:
         controls.append(button(f"阅读全文 · {len(answer_pages)} 页", "answer", turn, page=0))
@@ -243,10 +247,10 @@ def project(turn: Turn, *, page_bytes: int = 1800) -> dict[str, str]:
     elapsed = max(0, int((turn.ended or turn.updated if turn.status in TERMINAL else time.time()) - turn.created))
     process_title = f"已处理 {elapsed} 秒" if turn.status in TERMINAL else f"{status} · {elapsed} 秒"
     approval_buttons = []
-    if approval:
+    if approval and approval["status"] == "pending" and turn.status not in TERMINAL:
         for label, action in [("允许本次执行", "approve"), ("拒绝执行", "deny")]:
             approval_buttons.append(button(label, action, turn, approval_id=approval["id"]))
-        approval_buttons.append(button("查看操作详情", "step", turn, step_id="approval:" + approval["id"]))
+    approval_data = approval_view(turn, approval, page_bytes)
     data = {
         "status": status, "phase": turn.status, "turnId": turn.id,
         "thought": pages(thought.content, page_bytes)[-1] if thought and turn.status not in TERMINAL else "",
@@ -254,16 +258,55 @@ def project(turn: Turn, *, page_bytes: int = 1800) -> dict[str, str]:
         "processTitle": process_title, "processRows": rows, "processNavigation": process_navigation,
         "epoch": "done" if turn.status in TERMINAL else "active",
         "controls": controls,
-        "approvalTitle": "需要你的确认" if approval else "",
-        "approvalBody": ("仅允许本次操作，不会自动批准后续操作。\n\n"
-                         + approval["title"] + "\n\n"
-                         + pages(approval["summary"], page_bytes)[0]) if approval else "",
+        **approval_data,
         "approvalButtons": approval_buttons,
+        "approvalAllow": [b for b in approval_buttons if b["action"] == "approve"],
+        "approvalDeny": [b for b in approval_buttons if b["action"] == "deny"],
         "hasApproval": "yes" if approval else "no",
         "lastMessage": (turn.answer[:100] or status),
         "content": answer_pages[0] or (turn.error if turn.status in TERMINAL else ""),
     }
     return {k: v if isinstance(v, str) else json.dumps(v, ensure_ascii=False) for k, v in data.items()}
+
+
+def approval_view(turn: Turn, approval: dict | None, page_bytes: int) -> dict:
+    data = {"approvalTitle": "", "approvalBody": "", "approvalTarget": "", "approvalHint": "", "approvalOperation": "",
+            "hasApprovalTarget": "no", "hasApprovalDetail": "no", "approvalDetail": "",
+            "approvalDetailTitle": "展开完整说明", "approvalPages": []}
+    if not approval:
+        return data
+    summary = text(approval.get("summary"))
+    args = approval.get("arguments") or {}
+    if not isinstance(args, dict):
+        args = {}
+    target = next((text(args[k]) for k in ("command", "cmd", "file_path", "path", "url") if args.get(k)), "")
+    tool = approval.get("tool_name") or approval.get("title", "待确认操作")
+    state = approval["status"]
+    if state == "pending" and turn.status in TERMINAL:
+        state = "expired"
+    data["approvalTitle"] = {"pending": "需要你的确认", "approved": "已允许本次执行", "denied": "已拒绝执行",
+        "timeout": "确认已超时", "expired": "确认已失效"}.get(state, "确认已结束")
+    data["approvalHint"] = "仅允许本次操作，不会自动批准后续操作。" if state == "pending" else ""
+    brief = pages(summary, min(600, page_bytes))
+    data["approvalOperation"] = "操作 · " + tool
+    data["approvalBody"] = brief[0] + ("…" if len(brief) > 1 else "")
+    if target:
+        data["hasApprovalTarget"] = "yes"
+        data["approvalTarget"] = pages(target, min(480, page_bytes))[0] + ("…" if len(target.encode()) > min(480, page_bytes) else "")
+    # Show short, complete arguments directly. Longer data uses a local fold
+    # with bounded lossless pages; never truncate the persisted approval.
+    extra = {k: v for k, v in args.items() if text(v) != target}
+    needs_details = len(brief) > 1 or len(target.encode()) > min(480, page_bytes) or bool(extra)
+    if needs_details:
+        full = ("完整参数\n" + text(args) + "\n\n" if args else "") + "完整说明\n" + summary
+        chunks = pages(full, page_bytes)
+        page = max(0, min(turn.view_pages.get("approval:" + approval["id"], 0), len(chunks) - 1))
+        data.update(hasApprovalDetail="yes", approvalDetail=chunks[page],
+            approvalDetailTitle=("展开完整参数与说明" if args else "展开完整说明") + (f" · {page + 1}/{len(chunks)} 页" if len(chunks) > 1 else ""))
+        for label, index in (("上一页", page - 1), ("下一页", page + 1)):
+            if 0 <= index < len(chunks):
+                data["approvalPages"].append(button(label, "approval_page", turn, approval_id=approval["id"], page=index))
+    return data
 
 
 def detail(turn: Turn, action: str, page: int = 0, step_id: str = "", page_bytes: int = 1800) -> dict[str, str]:

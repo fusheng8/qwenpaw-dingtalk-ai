@@ -4,6 +4,21 @@ from qpai.transport import CardTransport
 from qpai.state import Turn
 
 
+def test_approval_parameters_stay_private_even_without_staff_id():
+    from qpai.state import project, PRIVATE_FIELDS
+    t = Turn("t", "s", "u", "staff", "c", is_group=True)
+    t.approvals["a"] = {"id": "a", "status": "pending", "summary": "private summary",
+                        "arguments": {"command": "private command"}}
+    for staff in ("staff", ""):
+        t.staff_id = staff
+        payload = CardTransport.card_data(t, project(t))
+        assert not PRIVATE_FIELDS & payload["cardData"]["cardParamMap"].keys()
+        if staff:
+            assert payload["privateData"][staff]["cardParamMap"]["approvalTarget"] == "private command"
+        else:
+            assert "privateData" not in payload
+
+
 @pytest.mark.asyncio
 async def test_create_and_updates_keep_one_card_and_explicit_user_id_type():
     api = CardTransport("app", "placeholder", "template")

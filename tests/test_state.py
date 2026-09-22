@@ -29,10 +29,57 @@ def test_confirmation_labels_keep_exact_approval_identity():
     t.approvals["request1"] = {"id": "request1", "title": "执行命令", "summary": "操作详情", "status": "pending"}
     data = project(t)
     assert data["approvalTitle"] == "需要你的确认"
-    assert "仅允许本次操作" in data["approvalBody"]
+    assert "仅允许本次操作" in data["approvalHint"]
     buttons = json.loads(data["approvalButtons"])
     assert [(b["text"], b["action"]) for b in buttons[:2]] == [("允许本次执行", "approve"), ("拒绝执行", "deny")]
     assert all(b["approval_id"] == "request1" and b["turn_id"] == "t" for b in buttons[:2])
+
+
+def test_compact_approval_and_resolved_receipt():
+    t = Turn("t", "s", "u", "staff", "c")
+    a = {"id": "a", "tool_name": "shell", "summary": "读取销售数据", "status": "pending",
+         "arguments": {"command": "python report.py"}}
+    t.approvals["a"] = a
+    d = project(t)
+    assert d["approvalTarget"] == "python report.py"
+    assert d["hasApprovalDetail"] == "no"
+    assert len(json.loads(d["approvalButtons"])) == 2
+    for status, title in [("approved", "已允许本次执行"), ("denied", "已拒绝执行"),
+                          ("timeout", "确认已超时"), ("expired", "确认已失效")]:
+        a["status"] = status
+        d = project(t)
+        assert d["hasApproval"] == "yes" and d["approvalTitle"] == title
+        assert d["approvalAllow"] == d["approvalDeny"] == "[]"
+        assert d["approvalHint"] == ""
+
+
+def test_long_approval_details_are_lossless_and_pending_takes_priority():
+    t = Turn("t", "s", "u", "staff", "c")
+    args = {"command": "长命令🌏" * 800, "cwd": "/data"}
+    summary = "很长的说明🌏" * 500
+    t.approvals["a"] = {"id": "a", "status": "pending", "summary": summary, "arguments": args}
+    expected = "完整参数\n" + json.dumps(args, ensure_ascii=False, indent=2) + "\n\n完整说明\n" + summary
+    chunks = pages(expected)
+    received = []
+    for index in range(len(chunks)):
+        t.view_pages["approval:a"] = index
+        d = project(t)
+        assert d["hasApprovalDetail"] == "yes"
+        received.append(d["approvalDetail"])
+        assert "参数" in d["approvalDetailTitle"]
+    assert "".join(received) == expected
+    t.approvals["b"] = {"id": "b", "status": "denied", "summary": "后来的其他请求"}
+    assert json.loads(project(t)["approvalAllow"])[0]["approval_id"] == "a"
+    t.status = "failed"
+    assert project(t)["approvalAllow"] == "[]"
+
+
+def test_summary_only_never_claims_to_have_parameters():
+    t = Turn("t", "s", "u", "staff", "c")
+    t.approvals["a"] = {"id": "a", "status": "pending", "summary": "说明" * 800}
+    d = project(t)
+    assert d["hasApprovalTarget"] == "no"
+    assert "完整说明" in d["approvalDetailTitle"] and "参数" not in d["approvalDetailTitle"]
 
 
 def test_utf8_pages_are_lossless():

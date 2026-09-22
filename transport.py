@@ -4,6 +4,7 @@ import time
 import uuid
 
 import aiohttp
+from .state import PRIVATE_FIELDS
 
 
 class CardAPIError(RuntimeError):
@@ -62,10 +63,10 @@ class CardTransport:
     @staticmethod
     def card_data(turn, data):
         public = dict(data)
-        rows = public.pop("processRows", "[]")
+        private = {key: public.pop(key) for key in PRIVATE_FIELDS & public.keys()}
         result = {"cardData": {"cardParamMap": public}}
         if turn.staff_id:
-            result["privateData"] = {turn.staff_id: {"cardParamMap": {"processRows": rows}}}
+            result["privateData"] = {turn.staff_id: {"cardParamMap": private}}
         return result
 
     async def create(self, turn, data):

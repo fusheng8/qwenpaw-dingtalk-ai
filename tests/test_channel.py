@@ -88,12 +88,22 @@ async def test_approval_resolves_exact_request_once(channel, monkeypatch):
     req = request(); await channel._before_consume_process(req)
     turn = channel.find_turn(req)
     pending = NS(channel=channel.channel, user_id="user", owner_agent_id="default", session_id="session",
-        root_session_id="session", future=asyncio.get_running_loop().create_future())
+        root_session_id="session", future=asyncio.get_running_loop().create_future(),
+        extra={"tool_call": {"id": "call1", "input": {"command": "python report.py", "cwd": "/data"}},
+               "channel_meta": {"session_webhook": "must not copy"}})
     fake = NS(get_request=AsyncMock(return_value=pending), resolve_request=AsyncMock(return_value=pending))
     monkeypatch.setattr(service, "get_approval_service", lambda: fake)
     await channel.send_approval_notification(session_id="session", user_id="user", request_id="approval1",
         tool_name="shell", severity="high", result_summary="运行部署命令")
-    await channel.card_callback(callback(turn, "approve", approval_id="approval1"))
+    assert turn.approvals["approval1"]["arguments"] == {"command": "python report.py", "cwd": "/data"}
+    page = await channel.card_callback(callback(turn, "approval_page", approval_id="approval1", page="0"))
+    assert page["userPrivateData"]["cardParamMap"]["approvalTarget"] == "python report.py"
+    assert "approvalTarget" not in page["cardData"]["cardParamMap"]
+    wrong = await channel.card_callback(callback(turn, "approval_page", approval_id="wrong", page="0"))
+    assert wrong["userPrivateData"]["cardParamMap"]["actionResult"] == "error"
+    response = await channel.card_callback(callback(turn, "approve", approval_id="approval1"))
+    assert response["userPrivateData"]["cardParamMap"]["approvalTitle"] == "已允许本次执行"
+    assert response["userPrivateData"]["cardParamMap"]["approvalAllow"] == "[]"
     await channel.card_callback(callback(turn, "approve", approval_id="approval1"))
     fake.resolve_request.assert_awaited_once_with("approval1", ApprovalDecision.APPROVED, scope=ApprovalScope.EXACT)
     assert not turn.pending()

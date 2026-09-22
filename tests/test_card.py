@@ -5,6 +5,32 @@ from xml.etree import ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_approval_is_outside_process_with_primary_action_and_local_details():
+    from qpai.state import APPROVAL_FIELDS
+    card = json.loads((ROOT / "cards/dingtalk-ai-card.json").read_text())
+    editor = json.loads(card["editorData"])
+    def walk(node):
+        yield node
+        for child in node.get("children", []):
+            yield from walk(child)
+    nodes = {n["id"]: n for n in walk(editor["schema"]["componentsTree"][0])}
+    variables = {v["name"]: v for v in editor["variableList"]}
+    assert all(variables[k]["private"] for k in APPROVAL_FIELDS)
+    assert variables["approvalBody"]["type"] == variables["approvalDetail"]["type"] == "string"
+    native = ET.fromstring(card["widgetInfo"])
+    for phase in (2, 3):
+        prefix = f"qpai_p{phase}_"
+        body = nodes[prefix + "body"]
+        assert prefix + "approval" in [c["id"] for c in body["children"]]
+        assert nodes[prefix + "approval_allow_button"]["props"]["color"]["value"] == "blue"
+        assert nodes[prefix + "approval_deny_button"]["props"]["color"]["value"] == "gray"
+        fold = nodes[prefix + "approval_node_ocmac5pte72"]
+        assert fold["props"]["visible"]["condition"]["conditions"][0]["variable"] == "hasApprovalDetail"
+        title = next(x for x in native.iter() if x.get("userId") == prefix + "approval_node_ocmubggnywb9")
+        assert any("cardPrivateData.approvalDetailTitle" in x.get("text", "") for x in title.iter())
+    assert "查看操作详情" not in card["editorData"]
+
+
 def test_process_loop_has_one_interleaved_event_prototype():
     card = json.loads((ROOT / "cards/dingtalk-ai-card.json").read_text())
     editor = json.loads(card["editorData"])
@@ -95,7 +121,7 @@ def test_native_fold_state_is_local_and_reset_at_completion():
         assert header["props"]["actionType"] == "setLocalState"
     native = ET.fromstring(card["widgetInfo"])
     local_actions = [x.get("onTap") for x in native.iter() if "'localData'" in x.get("onTap", "")]
-    assert len(local_actions) == 2
+    assert len(local_actions) == 4
     assert all("actionType" not in tap for tap in local_actions)
 
 
