@@ -292,3 +292,18 @@ def test_top_copy_uses_full_private_values_and_more_actions_are_bound_to_request
         params = {p["name"]: p for p in item["actionSheetRequestItemParams"]}
         assert params["approval_id"]["variable"] == "approvalId"
         assert params["turn_id"]["variable"] == "turnId"
+
+
+def test_top_footer_has_explicit_spacing_and_auto_height():
+    card = json.loads((ROOT / "cards/dingtalk-approval-top-card.json").read_text())
+    editor = json.loads(card["editorData"])
+    def walk(n):
+        yield n
+        for c in n.get("children", []): yield from walk(c)
+    nodes = {n["id"]: n for n in walk(editor["schema"]["componentsTree"][0])}
+    footer = nodes["qpai_top_approval_footer"]
+    assert footer["props"]["marginTop"] == 8
+    assert footer["props"]["marginBottom"] == 10
+    assert all(n["props"].get("isAutoHeight") is True for n in walk(nodes["qpai_top_approval"]) if n["componentName"] == "Grid")
+    native = {x.get("userId"): x for x in ET.fromstring(card["widgetInfo"]).iter() if x.get("userId")}
+    assert native[footer["id"]].get("marginBottom") == "10np"

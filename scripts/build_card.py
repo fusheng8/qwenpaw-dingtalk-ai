@@ -412,7 +412,8 @@ def approval_details(key):
         "items": "@dtArrayAppend{null," + ",".join(native_items) + "}"})
     x.set("onTap", "@dtActionSheet{" + sheet + "}")
     row, rx = compact_label(key + "_label", "approvalDetailTitle")
-    row["props"].update(text=string("详情与审批 ›"), marginLeft=4, marginRight=4)
+    row["props"].update(text=string("详情与审批 ›"), marginLeft=4, marginRight=4, customFontSize=13, customFontLineHeight=20)
+    rx.set("textSize", "13np"); rx.set("lineHeight", "20np")
     rx.set("marginLeft", "4np"); rx.set("marginRight", "4np")
     row["props"]["color"]["value"] = "#007FFF"
     rx.set("text", "详情与审批 ›"); rx.set("textColor", "@dtDarkModeAdapter{'#007FFF','#47A9FF'}")
@@ -426,7 +427,8 @@ def copy_row(key, field, caption):
         disabledWhileForward=True)
     x.set("onTap", "@dtCopy{" + data(field) + "}")
     label_node, lx = compact_label(key + "_label", field)
-    label_node["props"].update(text=string(caption), marginLeft=4, marginRight=4)
+    label_node["props"].update(text=string(caption), marginLeft=4, marginRight=4, customFontSize=13, customFontLineHeight=20)
+    lx.set("textSize", "13np"); lx.set("lineHeight", "20np")
     lx.set("marginLeft", "4np"); lx.set("marginRight", "4np")
     lx.set("text", caption)
     append((n, x), (label_node, lx))
@@ -461,7 +463,18 @@ def approval_panel(prefix):
         part[0]["props"].update(isAutoWidth=False, width=120, isFixedWidth=True)
         part[1].set("width", "120np")
         append(footer, part)
+    footer[0]["props"].update(marginTop=8, marginBottom=10)
+    footer[1].set("marginTop", "8np"); footer[1].set("marginBottom", "10np")
     append(approval, footer)
+    approval[0]["props"]["marginTop"] = 6
+    approval[1].set("marginTop", "6np")
+    # Explicit auto-height prevents editor defaults from clipping the footer.
+    def normalize(node):
+        if node["componentName"] == "Grid":
+            node["props"]["isAutoHeight"] = True
+        for child in node.get("children", []):
+            normalize(child)
+    normalize(approval[0])
     return approval
 
 
