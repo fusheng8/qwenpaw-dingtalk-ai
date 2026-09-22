@@ -5,6 +5,27 @@ from xml.etree import ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_process_loop_has_one_interleaved_event_prototype():
+    card = json.loads((ROOT / "cards/dingtalk-ai-card.json").read_text())
+    editor = json.loads(card["editorData"])
+    def walk(node):
+        yield node
+        for child in node.get("children", []):
+            yield from walk(child)
+    nodes = {n["id"]: n for n in walk(editor["schema"]["componentsTree"][0])}
+    native = ET.fromstring(card["widgetInfo"])
+    for phase in (2, 3):
+        loop = nodes[f"qpai_p{phase}_rows"]
+        assert len(loop["children"]) == 1
+        event = loop["children"][0]
+        assert event["id"] == f"qpai_p{phase}_event"
+        assert event["children"][0]["id"] == f"qpai_p{phase}_thought"
+        assert len(event["children"]) == 5
+        native_loop = next(x for x in native.iter() if x.get("userId") == loop["id"])
+        assert len(native_loop) == 1
+        assert native_loop[0].get("userId") == event["id"]
+
+
 def test_editor_and_native_trees_have_matching_ids_and_callbacks():
     card = json.loads((ROOT / "cards/dingtalk-ai-card.json").read_text())
     editor = json.loads(card["editorData"])

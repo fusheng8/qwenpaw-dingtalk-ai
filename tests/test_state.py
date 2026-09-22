@@ -2,6 +2,39 @@ import json
 from qpai.state import Turn, Store, pages, identity, project, detail
 
 
+def test_interleaved_events_keep_first_arrival_order_after_restart(tmp_path):
+    t = Turn("t", "s", "u", "staff", "c")
+    t.step("r1", "reasoning", "思考").content = "先查询"
+    t.set_answer("a1", "开始查询")
+    t.set_answer("a1", "开始查询服务")
+    t.step("tool1", "tool", "查询服务").content = "查询结果"
+    t.step("r2", "reasoning", "思考").content = "再检查文件"
+    db = Store(tmp_path / "turns.sqlite3")
+    db.save(t)
+    t = db.get("t")
+    t.set_answer("a2", "开始检查文件")
+    t.step("tool2", "tool", "读取文件").content = "文件内容"
+    t.set_answer("final", "最终回答")
+    t.status = "completed"
+    data = project(t)
+    rows = json.loads(data["processRows"])
+    assert [r["id"] for r in rows] == ["r1", "a1", "tool1", "r2", "a2", "tool2"]
+    assert [r["kind"] for r in rows] == ["thought", "thought", "tool", "thought", "thought", "tool"]
+    assert data["content"] == "最终回答"
+    db.close()
+
+
+def test_confirmation_labels_keep_exact_approval_identity():
+    t = Turn("t", "s", "u", "staff", "c")
+    t.approvals["request1"] = {"id": "request1", "title": "执行命令", "summary": "操作详情", "status": "pending"}
+    data = project(t)
+    assert data["approvalTitle"] == "需要你的确认"
+    assert "仅允许本次操作" in data["approvalBody"]
+    buttons = json.loads(data["approvalButtons"])
+    assert [(b["text"], b["action"]) for b in buttons[:2]] == [("允许本次执行", "approve"), ("拒绝执行", "deny")]
+    assert all(b["approval_id"] == "request1" and b["turn_id"] == "t" for b in buttons[:2])
+
+
 def test_utf8_pages_are_lossless():
     content = "你好🌏\n```python\nprint('x')\n```" * 500
     result = pages(content, 1800)

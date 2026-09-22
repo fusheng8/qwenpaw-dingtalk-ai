@@ -286,13 +286,17 @@ def process_panel(prefix, running):
     outer, inside = material_disclosure(prefix, running)
     rows = node("Loop", prefix + "rows", {"listData": ref("processRows"), "direction": "vertical", "visible": visible()}, [])
     rx = xml("ListLayout", userId=rows["id"], listData=data("processRows"), orientation="vertical")
+    # A Loop has one event-row prototype, keeping conditional branches inside
+    # each item rather than repeating separate thought/tool prototypes.
+    event = wrap(prefix + "event")
     c = cond("processRows[0].kind", "thought"); c["variableType"] = "loop"
     thought = wrap(prefix + "thought", c)
     append(thought, thinking_text(prefix + "thought_body"))
     append(thought, buttons(prefix + "thought_pages", "processRows[0].navigation", loop=True))
-    append((rows, rx), thought)
+    append(event, thought)
     for position in ("single", "start", "middle", "end"):
-        append((rows, rx), tool_link(prefix + "tool_" + position, position))
+        append(event, tool_link(prefix + "tool_" + position, position))
+    append((rows, rx), event)
     append(inside, (rows, rx))
     append(inside, buttons(prefix + "process_pages", "processNavigation"))
     divider = node("Divider", prefix + "process_divider", {"visible": visible(), "margin": -2,
@@ -356,13 +360,14 @@ def build():
         "componentsTree": [root], "i18n": {}}, "variableList": variables,
         "mockData": {"cardData": {"flowStatus": 2, "status": "正在处理", "epoch": "active",
             "thought": "正在汇总本月销售数据，并比较各产品的销售表现。", "content": "本月销售额为 128 万元，较上月增长 12%。其中，产品甲的增长最明显。", "hasApproval": "no",
-            "approvalTitle": "审批 · 执行数据分析", "approvalBody": "将运行销售分析脚本，读取本地销售数据并生成汇总报告。请确认是否允许执行。",
+            "approvalTitle": "需要你的确认", "approvalBody": "仅允许本次操作，不会自动批准后续操作。\n\n将运行销售分析脚本，读取本地销售数据并生成汇总报告。",
             "turnId": "preview", "hasProcess": "yes", "processTitle": "正在处理 · 11 秒", "processNavigation": [],
             "processRows": [{"id": "reason1", "kind": "thought", "title": "思考过程", "body": "正在汇总本月销售数据，并比较各产品的销售表现。", "pageLabel": "", "navigation": []},
                 {"id": "tool1", "kind": "tool", "icon": "command", "title": "已运行 python 分析销售数据.py", "body": "python 分析销售数据.py\n\n已读取 1,280 条销售记录，汇总报告已生成。", "pageLabel": "", "navigation": []},
+                {"id": "reason2", "kind": "thought", "title": "思考过程", "body": "报告已经生成，接下来读取汇总并核对客户信息。", "pageLabel": "", "navigation": []},
                 {"id": "tool2", "kind": "tool", "icon": "file", "title": "已读取 本月销售汇总.csv", "body": "本月销售汇总.csv\n\n已读取本月销售汇总。", "pageLabel": "", "navigation": []},
                 {"id": "tool3", "kind": "tool", "icon": "tool", "title": "正在调用 客户信息服务", "body": "正在等待服务返回结果…", "pageLabel": "", "navigation": []}],
-            "approvalButtons": [{"text": label, "action": action, "turn_id": "preview", "step_id": "", "page": "0", "approval_id": "preview-approval"} for label, action in [("批准本次", "approve"), ("拒绝", "deny")]],
+            "approvalButtons": [{"text": label, "action": action, "turn_id": "preview", "step_id": "", "page": "0", "approval_id": "preview-approval"} for label, action in [("允许本次执行", "approve"), ("拒绝执行", "deny")]],
             "controls": []},
         "cardPrivateData": {"actionResult": "", "detailVisible": "no", "detailEpoch": "active",
             "detailTitle": "工具执行结果", "detailBody": "已读取 1,280 条销售记录，汇总报告已生成。", "detailButtons": []}, "localData": {}},

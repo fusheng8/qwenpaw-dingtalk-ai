@@ -9,14 +9,14 @@
 在运行千问派的机器上执行：
 
 ```sh
-qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.7/dingtalk-ai-1.0.7.zip
+qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.8/dingtalk-ai-1.0.8.zip
 ```
 
 千问派已运行时，官方 CLI 会尝试热安装；未运行时，下次启动生效。安装后刷新控制台，在侧栏打开 **钉钉 AI**。升级同版本可在命令末尾加 `--force`。
 
 ## AI 卡片导入与配置
 
-1. [下载卡片导入文件](https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.7/dingtalk-ai-card.json)，也可在插件设置页点击「下载 AI 卡片模板」。
+1. [下载卡片导入文件](https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.8/dingtalk-ai-card.json)，也可在插件设置页点击「下载 AI 卡片模板」。
 2. 在 [钉钉卡片平台](https://card.dingtalk.com/) 新建 **AI 卡片**，通过模板编辑器的 JSON 导入功能选择该文件，保存并发布。复制完整模板 ID。
 3. 千问派「渠道」→「钉钉 AI · 单卡对话」→ Client ID 上方的「获取二维码」，用钉钉按官方流程选择或创建机器人并完成授权。凭据自动填入当前表单，填写模板 ID 后点击保存。侧栏「钉钉 AI」的独立设置页也保留扫码入口。也可以手动填写已有企业内部应用的 Client ID、Client Secret。
 4. 填写刚发布的卡片模板 ID，启用渠道，保存。Robot Code 通常留空即可。
@@ -27,6 +27,8 @@ qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/
 
 ### 从旧版升级
 
+1.0.8 将过程循环改为单个事件行，思考、执行说明和工具调用按发生顺序交错展示；中间说明转入过程记录时保留首次出现的位置。审批区改为「需要你的确认」，按钮为「允许本次执行」「拒绝执行」，明确仅授权本次操作。需要同时升级插件并重新导入、发布模板。钉钉客户端的实际渲染仍需导入后确认。
+
 1.0.7 修复浅灰思考文本组件引用 Markdown 类型变量的问题，改用独立的私有字符串变量 thoughtText。保留原始思考内容和无损分页。需要同时升级插件并重新导入、发布模板；完成后仍默认收起，需要展开过程查看思考。
 
 1.0.6 对齐过程标题与正文的边距，箭头紧随标题，收起向右、展开向下。思考正文使用较小的浅灰纯文本，工具链接保留蓝色，最终回答保留 Markdown 深色正文。展开时在过程末尾显示细分隔线，收起时分隔线一同隐藏。需要重新导入并发布模板。
@@ -36,7 +38,7 @@ qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/
 1.0.3 将所有外部工具、服务、命令及文件操作统一为思考过程区内的灰色单行活动摘要，显示图标、中文状态和操作目标，过长省略。展开后显示浅灰圆角结果框、工具名称、代码格式的完整参数和结果、执行状态及本页复制。顶部显示处理时长，思考实时展开，点击工具命令行直接展开结果，完成后过程自动收起。保留 1.0.1 的按钮成功判定修复和中文示例。请同时升级插件并重新导入、发布新模板。可以在原模板中导入后重新发布以保留模板 ID；若新建模板，则需要在插件配置中更新 ID。
 
 ```sh
-qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.7/dingtalk-ai-1.0.7.zip --force
+qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/download/v1.0.8/dingtalk-ai-1.0.8.zip --force
 ```
 
 ## 交互行为
@@ -44,7 +46,7 @@ qwenpaw plugin install https://github.com/fusheng8/qwenpaw-dingtalk-ai/releases/
 - 接到任务后创建卡片；提供方实际输出的 reasoning 流实时更新。模型没有公开 reasoning 时，只显示处理状态，不编造思考内容。
 - 第一层使用组件素材「展开折叠」，显示「正在处理／已处理 N 秒」。思考正文直接位于其中；工具、命令、服务调用使用原生 Link 组件，点击动作面板查看参数、结果和状态。
 - 过程页通过钉钉私有变量投放给本轮发起者。第一层展开和收起在客户端本地完成。工具结果的翻页位于动作面板内，切页后面板关闭，再点击同一工具链接查看新页。思考正文分页和每批 8 项过程的导航保留在过程区内。
-- 审批到来时原卡片显示「批准本次」「拒绝」。绑定当前智能体、当前会话、当前请求和发起者的钉钉 userId；重复、过期、错卡片和其他用户的点击不会执行审批。
+- 审批到来时原卡片显示「允许本次执行」「拒绝执行」。绑定当前智能体、当前会话、当前请求和发起者的钉钉 userId；重复、过期、错卡片和其他用户的点击不会执行审批。
 - 完成时第一层过程切换为独立的默认折叠状态，最终回答在下方保持展开。没有过程内容时不显示空面板。动作面板提供文字详情，无需部署外部网页，不承诺代码编辑器样式。
 - 长回答和工具结果受钉钉卡片大小限制，默认每页约 1800 UTF-8 字节；长回答首屏显示第一页并提供「阅读全文」。详情不会因预览长度被丢弃。
 - 同一用户连续消息按原消息逐条处理，每条独立卡片。群聊按用户隔离会话，审批仅限本轮发起者。

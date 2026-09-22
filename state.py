@@ -81,6 +81,7 @@ class Turn:
     revision: int = 0
     ended: float = 0
     view_pages: dict[str, int] = field(default_factory=dict)
+    answer_position: int | None = None
 
     def touch(self):
         self.updated = time.time()
@@ -96,7 +97,15 @@ class Turn:
 
     def set_answer(self, key: str, content: str):
         if self.answer_id and self.answer_id != key and self.answer:
-            self.step(self.answer_id, "progress", "执行说明").content = self.answer
+            previous = self.step(self.answer_id, "progress", "执行说明")
+            previous.content = self.answer
+            if self.answer_position is not None:
+                self.steps.remove(previous)
+                self.steps.insert(self.answer_position, previous)
+        if self.answer_id != key:
+            # Reserve the first-arrival position: later tool events must not
+            # jump ahead when this answer becomes an intermediate explanation.
+            self.answer_position = len(self.steps)
         self.answer_id, self.answer = key, content
         self.touch()
 
@@ -235,9 +244,9 @@ def project(turn: Turn, *, page_bytes: int = 1800) -> dict[str, str]:
     process_title = f"已处理 {elapsed} 秒" if turn.status in TERMINAL else f"{status} · {elapsed} 秒"
     approval_buttons = []
     if approval:
-        for label, action in [("批准本次", "approve"), ("拒绝", "deny")]:
+        for label, action in [("允许本次执行", "approve"), ("拒绝执行", "deny")]:
             approval_buttons.append(button(label, action, turn, approval_id=approval["id"]))
-        approval_buttons.append(button("完整审批详情", "step", turn, step_id="approval:" + approval["id"]))
+        approval_buttons.append(button("查看操作详情", "step", turn, step_id="approval:" + approval["id"]))
     data = {
         "status": status, "phase": turn.status, "turnId": turn.id,
         "thought": pages(thought.content, page_bytes)[-1] if thought and turn.status not in TERMINAL else "",
@@ -245,8 +254,10 @@ def project(turn: Turn, *, page_bytes: int = 1800) -> dict[str, str]:
         "processTitle": process_title, "processRows": rows, "processNavigation": process_navigation,
         "epoch": "done" if turn.status in TERMINAL else "active",
         "controls": controls,
-        "approvalTitle": approval["title"] if approval else "",
-        "approvalBody": pages(approval["summary"], page_bytes)[0] if approval else "",
+        "approvalTitle": "需要你的确认" if approval else "",
+        "approvalBody": ("仅允许本次操作，不会自动批准后续操作。\n\n"
+                         + approval["title"] + "\n\n"
+                         + pages(approval["summary"], page_bytes)[0]) if approval else "",
         "approvalButtons": approval_buttons,
         "hasApproval": "yes" if approval else "no",
         "lastMessage": (turn.answer[:100] or status),
