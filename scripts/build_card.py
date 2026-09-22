@@ -471,10 +471,17 @@ def approval_panel(prefix):
     # Explicit auto-height prevents editor defaults from clipping the footer.
     def normalize(node):
         if node["componentName"] == "Grid":
-            node["props"]["isAutoHeight"] = True
+            node["props"].update(isAutoHeight=True, childGravity="center")
+        elif node["componentName"] == "BaseText":
+            node["props"]["gravity"] = "center"
         for child in node.get("children", []):
             normalize(child)
     normalize(approval[0])
+    for element in approval[1].iter():
+        if element.tag == "LinearLayout":
+            element.set("childGravity", "center")
+        elif element.tag == "FastTextView":
+            element.set("textGravity", "center")
     return approval
 
 
