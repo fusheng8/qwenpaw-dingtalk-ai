@@ -211,15 +211,15 @@ def test_inline_result_pages_are_lossless_and_finished_duration_stays_fixed():
     assert "".join(received) == content
 
 
-def test_old_process_steps_remain_reachable_without_history_button():
+def test_all_process_steps_share_one_page_and_ignore_old_page_selection():
     t = Turn("t", "s", "u", "staff", "c")
-    for i in range(18):
+    for i in range(100):
         t.step(str(i), "tool", "命令" + str(i)).content = "结果"
-    assert json.loads(project(t)["processRows"])[-1]["id"] == "17"
-    t.view_pages["_process"] = 0
-    first = project(t)
-    assert json.loads(first["processRows"])[0]["id"] == "0"
-    assert json.loads(first["processNavigation"])[0]["action"] == "process_page"
+    for old_page in (0, 2, 99):
+        t.view_pages["_process"] = old_page
+        data = project(t)
+        assert [r["id"] for r in json.loads(data["processRows"])] == [str(i) for i in range(100)]
+        assert data["processNavigation"] == "[]"
 
 
 def test_all_external_activities_have_status_and_lossless_details():

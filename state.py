@@ -286,10 +286,8 @@ def project(turn: Turn, *, page_bytes: int = 1800) -> dict[str, str]:
     if len(answer_pages) > 1:
         controls.append(button("阅读全文", "answer", turn, page=0))
     process_steps = [s for s in turn.steps if s.kind != "approval" and (s.kind not in {"reasoning", "progress"} or s.content.strip())]
-    groups = [process_steps[i:i + 8] for i in range(0, len(process_steps), 8)] or [[]]
-    group = max(0, min(turn.view_pages.get("_process", len(groups) - 1), len(groups) - 1))
     rows = []
-    for step in groups[group]:
+    for step in process_steps:
         body = (step.arguments + "\n\n" if step.arguments else "") + step.content
         chunks = pages(body, page_bytes)
         default_page = len(chunks) - 1 if step.kind == "reasoning" and turn.status not in TERMINAL else 0
@@ -324,10 +322,6 @@ def project(turn: Turn, *, page_bytes: int = 1800) -> dict[str, str]:
             "pageLabel": f"第 {page + 1}/{len(chunks)} 页" if len(chunks) > 1 else "",
             "navigation": navigation})
     process_navigation = []
-    if group:
-        process_navigation.append(button("较早过程", "process_page", turn, page=group - 1))
-    if group + 1 < len(groups):
-        process_navigation.append(button("较新过程", "process_page", turn, page=group + 1))
     elapsed = max(0, int((turn.ended or turn.updated if turn.status in TERMINAL else time.time()) - turn.created))
     process_title = f"已处理 {elapsed} 秒" if turn.status in TERMINAL else f"{status} · {elapsed} 秒"
     approval_buttons = []
