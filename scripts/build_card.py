@@ -9,7 +9,7 @@ from xml.etree import ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 PRIVATE = {"detailTitle", "detailBody", "detailButtons", "detailVisible", "detailEpoch", "actionResult", "processRows", "approvalNotice"}
-PRIVATE.update({"approvalTitle", "approvalBody", "approvalButtons", "approvalAllow", "approvalDeny",
+PRIVATE.update({"approvalId", "approvalCommand", "approvalTitle", "approvalBody", "approvalButtons", "approvalAllow", "approvalDeny",
     "approvalDetail", "approvalDetailTitle", "approvalPages", "approvalTarget", "hasApprovalTarget",
     "hasApprovalDetail", "hasApproval", "approvalHint", "approvalOperation"})
 MARKDOWN = {"content", "finalContent", "thought", "detailBody"}
@@ -366,58 +366,102 @@ def compact_label(key, field, bold=False):
     return n, x
 
 
+def top_params(action):
+    return [
+        {"id": "action", "name": "action", "type": "fixed", "value": action, "variable": "", "variableType": "global"},
+        {"id": "turn_id", "name": "turn_id", "type": "variable", "variable": "turnId", "variableType": "global", "value": ""},
+        {"id": "approval_id", "name": "approval_id", "type": "variable", "variable": "approvalId", "variableType": "global", "value": ""}]
+
+
+def top_request(action):
+    return map_expr({"actionType": "'0'", "cardInstanceId": "@data{data.cardInstanceId}", "actionId": "'" + action + "'",
+        "actionData": map_expr({"context": "@data{data.renderContext}", "cardPrivateData": map_expr({
+            "params": map_expr({"action": "'" + action + "'", "turn_id": data("turnId"), "approval_id": data("approvalId")}),
+            "actionIds": "@dtArrayAppend{null,'" + action + "'}"})}),
+        "requestEventId": "'" + action + "'", "requestStatusKey": "'top_" + action + "'"})
+
+
+def top_button(key, caption, action, primary=False):
+    loop, lx = buttons(key, "approvalAllow", primary=primary)
+    n, x = loop["children"][0], lx[0]
+    n["props"].update(text=string(caption), actionId=string(action), params=top_params(action),
+        marginLeft=4, marginRight=4, marginTop=0, marginBottom=0)
+    x.set("onTap", "@dtSendOutData{" + top_request(action) + "}")
+    x[0].set("text", caption)
+    x.set("height", "40np")
+    for side in ("Left", "Right"): x.set("margin" + side, "4np")
+    for side in ("Top", "Bottom"): x.set("margin" + side, "0np")
+    return n, x
+
+
 def approval_details(key):
-    # Same native action-sheet contract as tool details, using global private
-    # variables rather than a loop row. No request is made when opening it.
     n, x = wrap(key, cond("hasApprovalDetail"))
+    items, native_items = [], []
+    for caption, action in [("允许此操作（EXACT）", "approve"),
+            ("允许类似操作（SIMILAR，将扩大授权范围）", "approve_similar"),
+            ("拒绝执行", "deny"), ("取消这项审批（不执行）", "cancel_approval"), ("关闭详情，暂不处理", "close")]:
+        items.append({"id": action, "actionSheetStyle": "default", "actionSheetName": string(caption),
+            "actionSheetDesc": string(""), "actionSheetAction": "request", "actionSheetRequestItemActionId": string(action),
+            "actionSheetRequestItemParams": top_params(action), "actionSheetRequestItemSuccessToast": string("")})
+        native_items.append(map_expr({"style": "'default'", "name": localized("'" + caption + "'"),
+            "desc": localized("''"), "icon": "''", "action": "'dtSendOutData'", "data": top_request(action)}))
     n["props"].update(actionType="actionSheet", enableClickEvent=True,
         actionSheetTitle=string("${approvalDetailTitle}"), actionSheetMessage=string("${approvalDetail}"),
-        actionSheetItems=[{"id": "close", "actionSheetStyle": "default", "actionSheetName": string("关闭"),
-            "actionSheetDesc": string(""), "actionSheetAction": "request",
-            "actionSheetRequestItemActionId": string("close"),
-            "actionSheetRequestItemParams": [
-                {"id": "action", "name": "action", "type": "fixed", "value": "close"},
-                {"id": "turn_id", "name": "turn_id", "type": "variable", "variable": "turnId", "variableType": "global"}],
-            "actionSheetRequestItemSuccessToast": string("")}], disabledWhileForward=True)
-    payload = map_expr({"actionType": "'0'", "cardInstanceId": "@data{data.cardInstanceId}", "actionId": "'close'",
-        "actionData": map_expr({"context": "@data{data.renderContext}", "cardPrivateData": map_expr({
-            "params": map_expr({"action": "'close'", "turn_id": data("turnId")}), "actionIds": "@dtArrayAppend{null,'close'}"})}),
-        "requestEventId": "'close'", "requestStatusKey": "'top_details_close'"})
-    item = map_expr({"style": "'default'", "name": localized("'关闭'"), "desc": localized("''"), "icon": "''",
-        "action": "'dtSendOutData'", "data": payload})
+        actionSheetItems=items, disabledWhileForward=True)
     sheet = map_expr({"title": localized(data("approvalDetailTitle")), "message": localized(data("approvalDetail")),
-        "items": "@dtArrayAppend{null," + item + "}"})
+        "items": "@dtArrayAppend{null," + ",".join(native_items) + "}"})
     x.set("onTap", "@dtActionSheet{" + sheet + "}")
     row, rx = compact_label(key + "_label", "approvalDetailTitle")
-    row["props"]["text"] = string("参数与风险说明  ›")
+    row["props"].update(text=string("详情与审批 ›"), marginLeft=4, marginRight=4)
+    rx.set("marginLeft", "4np"); rx.set("marginRight", "4np")
     row["props"]["color"]["value"] = "#007FFF"
-    rx.set("text", "参数与风险说明  ›"); rx.set("textColor", "@dtDarkModeAdapter{'#007FFF','#47A9FF'}")
+    rx.set("text", "详情与审批 ›"); rx.set("textColor", "@dtDarkModeAdapter{'#007FFF','#47A9FF'}")
     append((n, x), (row, rx))
+    return n, x
+
+
+def copy_row(key, field, caption):
+    n, x = wrap(key)
+    n["props"].update(actionType="copy", copyValue=string("${" + field + "}"), enableClickEvent=True,
+        disabledWhileForward=True)
+    x.set("onTap", "@dtCopy{" + data(field) + "}")
+    label_node, lx = compact_label(key + "_label", field)
+    label_node["props"].update(text=string(caption), marginLeft=4, marginRight=4)
+    lx.set("marginLeft", "4np"); lx.set("marginRight", "4np")
+    lx.set("text", caption)
+    append((n, x), (label_node, lx))
     return n, x
 
 
 def approval_panel(prefix):
     approval = wrap(prefix + "approval", cond("hasApproval"))
     append(approval, compact_label(prefix + "approval_title", "approvalTitle", bold=True))
-    append(approval, compact_label(prefix + "approval_target_text", "approvalTarget"))
+    target = wrap(prefix + "approval_target")
+    target[0]["props"].update(actionType="copy", copyValue=string("${approvalCommand}"), enableClickEvent=True)
+    target[1].set("onTap", "@dtCopy{" + data("approvalCommand") + "}")
+    append(target, compact_label(prefix + "approval_target_text", "approvalTarget"))
+    append(approval, target)
     actions = wrap(prefix + "approval_actions")
     actions[0]["props"].update(direction="horizontal", marginLeft=8, marginRight=8, marginTop=4, marginBottom=4)
     actions[1].set("orientation", "horizontal")
     for side in ("Left", "Right"): actions[1].set("margin" + side, "8np")
     for side in ("Top", "Bottom"): actions[1].set("margin" + side, "4np")
-    for suffix, field, primary in [("allow", "approvalAllow", True), ("deny", "approvalDeny", False)]:
+    for suffix, caption, action, primary in [("allow", "允许此操作", "approve", True), ("deny", "拒绝执行", "deny", False)]:
         cell = wrap(prefix + "approval_" + suffix + "_cell")
-        cell[0]["props"].update(isAutoWidth=False, width=50, isFixedWidth=False)
-        cell[1].set("width", "0np"); cell[1].set("weight", "1")
-        action = buttons(prefix + "approval_" + suffix, field, primary=primary)
-        button = action[0]["children"][0]; bx = action[1][0]
-        button["props"].update(marginLeft=4, marginRight=4, marginTop=0, marginBottom=0)
-        bx.set("height", "44np")
-        for side in ("Left", "Right"): bx.set("margin" + side, "4np")
-        for side in ("Top", "Bottom"): bx.set("margin" + side, "0np")
-        append(cell, action); append(actions, cell)
+        cell[0]["props"].update(isAutoWidth=False, width=120, isFixedWidth=True)
+        cell[1].set("width", "120np")
+        append(cell, top_button(prefix + "approval_" + suffix, caption, action, primary))
+        append(actions, cell)
     append(approval, actions)
-    append(approval, approval_details(prefix + "approval_details"))
+    footer = wrap(prefix + "approval_footer")
+    footer[0]["props"].update(direction="horizontal", marginLeft=8, marginRight=8)
+    footer[1].set("orientation", "horizontal")
+    footer[1].set("marginLeft", "8np"); footer[1].set("marginRight", "8np")
+    for part in [approval_details(prefix + "approval_details"), copy_row(prefix + "copy_details", "approvalDetail", "复制完整详情")]:
+        part[0]["props"].update(isAutoWidth=False, width=120, isFixedWidth=True)
+        part[1].set("width", "120np")
+        append(footer, part)
+    append(approval, footer)
     return approval
 
 
@@ -508,7 +552,7 @@ def build(top=False):
         approvalDetail="", approvalDetailTitle="展开完整说明", approvalPages=[],
         approvalHint="仅允许本次操作，不会自动批准后续操作。", approvalOperation="操作 · 执行数据分析")
     if top:
-        mock.update(approvalTitle="需要确认 · 数据分析", approvalDetailTitle="完整参数与风险说明",
+        mock.update(approvalId="preview-approval", approvalCommand="python 分析销售数据.py", approvalTitle="需要确认 · 数据分析", approvalDetailTitle="完整参数与风险说明",
             hasApprovalDetail="yes", approvalDetail="操作：数据分析\n\n完整参数\npython 分析销售数据.py\n\n风险说明\n读取本地销售数据并生成汇总报告。仅允许本次操作。")
     for key in list(mock):
         if key in PRIVATE:

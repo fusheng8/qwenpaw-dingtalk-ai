@@ -29,7 +29,7 @@ def request(message="m1"):
 
 
 def callback(turn, action, **params):
-    return {"outTrackId": turn.id + ("_approval" if action in {"approve", "deny", "approval_page"} else ""), "userId": "staff", "content": json.dumps({"cardPrivateData": {
+    return {"outTrackId": turn.id + ("_approval" if action in {"approve", "approve_similar", "deny", "cancel_approval", "approval_page"} else ""), "userId": "staff", "content": json.dumps({"cardPrivateData": {
         "params": {"turn_id": turn.id, "action": action, **params}}})}
 
 
@@ -459,3 +459,25 @@ def test_top_detail_contains_full_request_while_preview_remains_single_line(chan
     t.approvals["a"]["status"] = "denied"
     view = channel.card_view(t, top=True)
     assert view["hasApproval"] == "no" and view["approvalDetail"] == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action,decision,scope", [
+    ("approve_similar", "approved", "similar"), ("deny", "denied", "exact"), ("cancel_approval", "denied", "exact")])
+async def test_extended_top_approval_actions_use_native_decision_scope(channel, monkeypatch, action, decision, scope):
+    from qwenpaw.app.approvals import service
+    t = add_top_approval(channel)
+    pending = NS(channel=channel.channel, user_id=t.user_id, owner_agent_id=t.agent_id,
+                 session_id=t.session_id, root_session_id=t.session_id)
+    fake = NS(get_request=AsyncMock(return_value=pending), resolve_request=AsyncMock(return_value=pending))
+    monkeypatch.setattr(service, "get_approval_service", lambda: fake)
+    await channel.sync_tops()
+    response = await channel.card_callback(callback(t, action, approval_id="a"))
+    assert response["userPrivateData"]["cardParamMap"]["actionResult"] == "ok"
+    call = fake.resolve_request.await_args
+    assert call.args[1].value == decision and call.kwargs["scope"].value == scope
+    assert t.approvals["a"]["selected_action"] == action
+    assert not t.pending()
+    await channel.card_callback(callback(t, action, approval_id="a"))
+    fake.resolve_request.assert_awaited_once()
+    await asyncio.gather(*channel.flush_tasks.values())

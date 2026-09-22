@@ -252,8 +252,8 @@ def test_ceiling_has_bounded_header_and_parallel_actions_before_details():
     nodes = {n["id"]: n for n in walk(editor["schema"]["componentsTree"][0])}
     approval = nodes["qpai_top_approval"]
     assert [n["id"] for n in approval["children"]] == [
-        "qpai_top_approval_title", "qpai_top_approval_target_text",
-        "qpai_top_approval_actions", "qpai_top_approval_details"]
+        "qpai_top_approval_title", "qpai_top_approval_target",
+        "qpai_top_approval_actions", "qpai_top_approval_footer"]
     for key in ("title", "target_text"):
         assert nodes["qpai_top_approval_" + key]["props"]["maxLine"]["value"] == 1
     actions = nodes["qpai_top_approval_actions"]
@@ -265,7 +265,30 @@ def test_ceiling_has_bounded_header_and_parallel_actions_before_details():
     elements = {x.get("userId"): x for x in native.iter() if x.get("userId")}
     assert elements[actions["id"]].get("orientation") == "horizontal"
     for action in ("allow", "deny"):
-        assert elements[f"qpai_top_approval_{action}_cell"].get("weight") == "1"
-        assert elements[f"qpai_top_approval_{action}_button"].get("height") == "44np"
+        assert elements[f"qpai_top_approval_{action}_cell"].get("width") == "120np"
+        cell = nodes[f"qpai_top_approval_{action}_cell"]
+        assert cell["props"]["isFixedWidth"] is True
+        assert cell["children"][0]["componentName"] == "SingleButton"
+        assert elements[f"qpai_top_approval_{action}_button"].get("height") == "40np"
     assert not any("cardPrivateData.approvalBody" in x.get("text", "") or
                    "cardPrivateData.approvalDetail}" in x.get("text", "") for x in native.iter())
+
+
+def test_top_copy_uses_full_private_values_and_more_actions_are_bound_to_request():
+    card = json.loads((ROOT / "cards/dingtalk-approval-top-card.json").read_text())
+    editor = json.loads(card["editorData"])
+    def walk(n):
+        yield n
+        for c in n.get("children", []): yield from walk(c)
+    nodes = {n["id"]: n for n in walk(editor["schema"]["componentsTree"][0])}
+    native = {x.get("userId"): x for x in ET.fromstring(card["widgetInfo"]).iter() if x.get("userId")}
+    for key, field in [("qpai_top_approval_target", "approvalCommand"), ("qpai_top_copy_details", "approvalDetail")]:
+        assert nodes[key]["props"]["actionType"] == "copy"
+        assert nodes[key]["props"]["copyValue"]["content"] == "${" + field + "}"
+        assert native[key].get("onTap") == "@dtCopy{@data{data.cardPrivateData." + field + "}}"
+    items = nodes["qpai_top_approval_details"]["props"]["actionSheetItems"]
+    assert {i["id"] for i in items} == {"approve", "approve_similar", "deny", "cancel_approval", "close"}
+    for item in items:
+        params = {p["name"]: p for p in item["actionSheetRequestItemParams"]}
+        assert params["approval_id"]["variable"] == "approvalId"
+        assert params["turn_id"]["variable"] == "turnId"

@@ -205,15 +205,20 @@ class DingTalkAIChannel(DingTalkChannel):
             current = next(iter(turn.pending()), None) if turn.status not in TERMINAL else None
             result = {key: value for key, value in data.items() if key in APPROVAL_FIELDS}
             result["turnId"] = turn.id
+            result.update(approvalId="", approvalCommand="")
             if current:
                 tool = str(current.get("tool_name") or "工具")
+                result["approvalId"] = current["id"]
+                args = current.get("arguments") or {}
+                result["approvalCommand"] = next((text(args[k]) for k in ("command", "cmd", "file_path", "path", "url") if isinstance(args, dict) and args.get(k)), text(args))
                 result["approvalTitle"] = "需要确认 · " + tool[:32]
                 # Always include the complete request, even if the inline preview
                 # was short. Nothing expands vertically inside the ceiling.
                 result["approvalDetailTitle"] = "完整参数与风险说明"
                 result["approvalDetail"] = ("操作：" + tool + "\n\n完整参数\n" + text(current.get("arguments") or {})
                     + "\n\n风险说明\n" + text(current.get("summary"))
-                    + "\n\n仅允许本次操作，不会自动批准后续操作。")
+                    + "\n\n授权范围：\n允许此操作：使用千问派 EXACT 范围；治理模块可能记住当前目标。\n允许类似操作：使用 SIMILAR 范围，可能记住并放行类似目标。\n拒绝执行／取消审批：不批准当前操作，不代表停止整轮任务。"
+                    + "\n\n本轮待审批\n" + "\n".join(f"{i + 1}. {a.get('tool_name', '工具')} · {a['id']}" for i, a in enumerate(turn.pending())))
                 result["hasApprovalDetail"] = "yes"
                 result["approvalTarget"] = " ".join((result["approvalTarget"] or result["approvalOperation"]).split())
             return result
@@ -573,9 +578,9 @@ class DingTalkAIChannel(DingTalkChannel):
             action = params.get("action")
             if is_top and (card_id != self.transport.top_id(turn) or not turn.top_active):
                 raise ValueError("审批吊顶已关闭")
-            if action in {"approve", "deny", "approval_page"} and not is_top:
+            if action in {"approve", "approve_similar", "deny", "cancel_approval", "approval_page"} and not is_top:
                 raise ValueError("请在会话顶部审批，原消息内的审批入口已停用")
-            if is_top and action not in {"approve", "deny", "approval_page", "close"}:
+            if is_top and action not in {"approve", "approve_similar", "deny", "cancel_approval", "approval_page", "close"}:
                 raise ValueError("此操作不属于审批吊顶")
             if action == "thought_toggle":
                 key = str(params.get("step_id") or "")
@@ -599,7 +604,7 @@ class DingTalkAIChannel(DingTalkChannel):
                 turn.view_pages[key] = max(0, int(params.get("page", 0)))
                 self.store.save(turn)
                 return self.callback_response(public=self.card_view(turn, top=is_top))
-            if action in {"approve", "deny"}:
+            if action in {"approve", "approve_similar", "deny", "cancel_approval"}:
                 from qwenpaw.app.approvals.service import get_approval_service
                 from qwenpaw.security.tool_guard.approval import ApprovalDecision, ApprovalScope
                 approval_id = str(params.get("approval_id") or "")
@@ -613,11 +618,14 @@ class DingTalkAIChannel(DingTalkChannel):
                     or pending.owner_agent_id != turn.agent_id
                     or turn.session_id not in {pending.session_id, pending.root_session_id}):
                     raise ValueError("审批已处理、已过期或不属于本轮对话")
-                decision = ApprovalDecision.APPROVED if action == "approve" else ApprovalDecision.DENIED
-                resolved = await get_approval_service().resolve_request(approval_id, decision, scope=ApprovalScope.EXACT)
+                decision = ApprovalDecision.APPROVED if action in {"approve", "approve_similar"} else ApprovalDecision.DENIED
+                scope = ApprovalScope.SIMILAR if action == "approve_similar" else ApprovalScope.EXACT
+                resolved = await get_approval_service().resolve_request(approval_id, decision, scope=scope)
                 if resolved is None:
                     raise ValueError("审批已由其他入口处理")
                 approval["status"] = decision.value
+                approval["selected_action"] = action
+                approval["selected_scope"] = scope.value
                 self.sync_approval_step(turn, approval)
                 turn.status = "waiting" if turn.pending() else "running"
                 turn.touch()

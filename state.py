@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
-APPROVAL_FIELDS = {"approvalTitle", "approvalBody", "approvalButtons", "approvalAllow", "approvalDeny",
+APPROVAL_FIELDS = {"approvalId", "approvalCommand", "approvalTitle", "approvalBody", "approvalButtons", "approvalAllow", "approvalDeny",
                    "approvalDetail", "approvalDetailTitle", "approvalPages", "approvalTarget",
                    "hasApprovalTarget", "hasApprovalDetail", "hasApproval", "approvalHint", "approvalOperation"}
 PRIVATE_FIELDS = {"processRows", "approvalNotice", *APPROVAL_FIELDS}
