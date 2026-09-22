@@ -16,6 +16,7 @@ def channel(tmp_path):
     ch = DingTalkAIChannel.from_config(process, NS(enabled=False, client_id="test", client_secret="not-a-secret",
         card_template_id="template"), workspace_dir=tmp_path)
     ch.transport = NS(create=AsyncMock(), update=AsyncMock(), stream=AsyncMock(), close=AsyncMock())
+    ch._send_emotion = AsyncMock()
     yield ch
     ch.store.close()
 
@@ -28,6 +29,53 @@ def request(message="m1"):
 def callback(turn, action, **params):
     return {"outTrackId": turn.id, "userId": "staff", "content": json.dumps({"cardPrivateData": {
         "params": {"turn_id": turn.id, "action": action, **params}}})}
+
+
+@pytest.mark.asyncio
+async def test_reactions_follow_original_message_and_replace_previous_state(channel):
+    req = request("original-message")
+    await channel._before_consume_process(req)
+    t = channel.find_turn(req)
+    channel._send_emotion.assert_awaited_once_with("original-message", "conversation", "🤔Thinking")
+    await channel.flush(t)
+    assert channel._send_emotion.await_count == 1
+    t.status = "waiting"
+    await channel.flush(t)
+    t.status = "running"
+    await channel.flush(t)
+    await channel._on_process_completed(req, "", {})
+    calls = channel._send_emotion.await_args_list
+    assert [(c.args[2], c.kwargs.get("recall", False)) for c in calls] == [
+        ("🤔Thinking", False), ("🤔Thinking", True), ("⏳待确认", False),
+        ("⏳待确认", True), ("🤔Thinking", False), ("🤔Thinking", True), ("🥳Done", False)]
+    assert all(c.args[:2] == ("original-message", "conversation") for c in calls)
+    restored = channel.store.get(t.id)
+    assert restored.message_id == "original-message" and restored.reaction == "🥳Done"
+    await channel.sync_reaction(restored)
+    assert channel._send_emotion.await_count == 7
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,emoji", [("failed", "☹️Error"), ("cancelled", "🛑已停止"), ("interrupted", "☹️Error")])
+async def test_terminal_reactions_never_show_done_on_error(channel, status, emoji):
+    t = Turn("t", "s", "u", "staff", "c", status=status, message_id="m", reaction="🤔Thinking")
+    await channel.sync_reaction(t)
+    assert channel._send_emotion.await_args.args == ("m", "c", emoji)
+    assert t.reaction == emoji
+
+
+@pytest.mark.asyncio
+async def test_reaction_failure_does_not_block_card_and_missing_id_is_skipped(channel):
+    channel._send_emotion.side_effect = RuntimeError("API unavailable")
+    req = request()
+    await channel._before_consume_process(req)
+    assert channel.transport.create.await_count == 1
+    t = channel.find_turn(req)
+    assert t.reaction == ""
+    channel._send_emotion.reset_mock()
+    t.message_id = ""
+    await channel.sync_reaction(t)
+    channel._send_emotion.assert_not_awaited()
 
 
 @pytest.mark.asyncio

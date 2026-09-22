@@ -166,13 +166,14 @@ class DingTalkAIChannel(DingTalkChannel):
             return
         turn = Turn(key, request.session_id, request.user_id,
             str(meta.get("sender_staff_id") or ""), str(meta.get("conversation_id") or ""),
-            agent_id=self.agent_id, is_group=bool(meta.get("is_group")))
+            agent_id=self.agent_id, is_group=bool(meta.get("is_group")), message_id=str(meta.get("message_id") or ""))
         self.turns[key] = turn
         self.store.save(turn)
         await self.flush(turn)
 
     async def flush(self, turn):
         async with self.locks.setdefault(turn.id, asyncio.Lock()):
+            await self.sync_reaction(turn)
             data = project(turn, page_bytes=self.page_bytes)
             final = turn.status in TERMINAL
             self.store.save(turn)
@@ -190,6 +191,29 @@ class DingTalkAIChannel(DingTalkChannel):
                     turn.finalized = True
                     self.store.save(turn)
             self.last_flush[turn.id] = time.monotonic()
+
+    async def sync_reaction(self, turn):
+        """Reuse the official best-effort reaction API on the inbound message.
+
+        The official helper swallows API errors, so `reaction` records the
+        last requested state, not a delivery acknowledgement.
+        """
+        if not turn.message_id or not turn.conversation_id:
+            return
+        target = {"running": "🤔Thinking", "waiting": "⏳待确认", "completed": "🥳Done",
+                  "failed": "☹️Error", "cancelled": "🛑已停止", "interrupted": "☹️Error"}.get(turn.status)
+        if not target or target == turn.reaction:
+            return
+        try:
+            if turn.reaction:
+                await asyncio.wait_for(self._send_emotion(turn.message_id, turn.conversation_id,
+                    turn.reaction, recall=True), timeout=2)
+            await asyncio.wait_for(self._send_emotion(turn.message_id, turn.conversation_id, target), timeout=2)
+            turn.reaction = target
+            self.store.save(turn)
+        except Exception:
+            # Feedback must never prevent the card or the agent from running.
+            logger.debug("Message reaction update failed for %s", turn.id, exc_info=True)
 
     def changed(self, turn):
         turn.touch()
@@ -466,6 +490,7 @@ class DingTalkAIChannel(DingTalkChannel):
                 turn.status = "waiting" if turn.pending() else "running"
                 turn.touch()
                 self.store.save(turn)
+                self.changed(turn)
                 return self.callback_response(public=project(turn, page_bytes=self.page_bytes), private={"detailVisible": "no"})
             if action == "close":
                 return self.callback_response(private={"detailVisible": "no"})

@@ -162,6 +162,8 @@ class Turn:
     ended: float = 0
     view_pages: dict[str, int] = field(default_factory=dict)
     answer_position: int | None = None
+    message_id: str = ""
+    reaction: str = ""
 
     def touch(self):
         self.updated = time.time()
