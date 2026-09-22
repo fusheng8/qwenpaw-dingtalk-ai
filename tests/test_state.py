@@ -1,5 +1,60 @@
 import json
+import pytest
 from qpai.state import Turn, Store, pages, identity, project, detail
+
+
+@pytest.mark.parametrize("payload,expected", [
+    ({"output": "success"}, "returned"),
+    ({"output": '{"exit_code": 0}'}, "returned"),
+    ({"output": "text", "status": "completed"}, "returned"),
+    ({"output": {"exit_code": 0}}, "completed"),
+    ({"output": {"exit_code": 2}}, "failed"),
+    ({"output": {"isError": True}}, "failed"),
+    ({"output": "text", "success": False}, "failed"),
+    ({"output": "text", "status": "blocked"}, "denied"),
+])
+def test_tool_status_requires_execution_evidence(payload, expected):
+    from qpai.state import tool_result_status
+    assert tool_result_status(payload) == expected
+
+
+def test_answer_tables_become_lists_without_mutating_code_or_original():
+    from qpai.state import readable_answer
+    raw = "结果\n\n| 命令 | 状态 |\n| --- | --- |\n| `a \\| b` | 被拒绝 |\n| `c` | 未执行 |\n\n```text\n| x | y |\n| --- | --- |\n| 1 | 2 |\n```"
+    result = readable_answer(raw)
+    assert "- 命令：`a \\| b`" in result and "- 状态：被拒绝" in result
+    assert "```text\n| x | y |\n| --- | --- |\n| 1 | 2 |\n```" in result
+    t = Turn("t", "s", "u", "staff", "c", answer=raw, status="completed")
+    assert project(t)["finalContent"] == result
+    assert t.answer == raw
+
+
+def test_only_exact_adjacent_prose_duplicates_are_removed():
+    from qpai.state import readable_answer
+    assert readable_answer("已拒绝。\n\n已拒绝。\n\n说明。") == "已拒绝。\n\n说明。"
+    assert readable_answer("执行成功。\n\n执行失败。") == "执行成功。\n\n执行失败。"
+    code = "```text\na\n\na\n```"
+    assert readable_answer(code) == code
+
+
+def test_long_thought_preview_expands_without_losing_chronology():
+    t = Turn("t", "s", "u", "staff", "c")
+    t.step("r", "reasoning", "思考").content = "长思考" * 500
+    t.step("tool", "tool", "查询").content = "结果"
+    t.view_pages["r"] = 0
+    row = json.loads(project(t)["processRows"])[0]
+    assert len(row["thoughtText"]) == 221
+    assert [b["text"] for b in row["navigation"]] == ["展开全文"]
+    t.view_pages["_thought:r"] = 1
+    rows = json.loads(project(t)["processRows"])
+    assert [r["id"] for r in rows] == ["r", "tool"]
+    assert rows[0]["thoughtText"] == rows[0]["body"]
+    assert [b["text"] for b in rows[0]["navigation"]] == ["收起全文", "下一页"]
+
+
+def test_interruption_without_answer_still_has_final_error_content():
+    t = Turn("t", "s", "u", "staff", "c", status="interrupted", error="服务重启，请重新发送消息。")
+    assert project(t)["finalContent"] == t.error
 
 
 def test_interleaved_events_keep_first_arrival_order_after_restart(tmp_path):
@@ -165,14 +220,14 @@ def test_all_external_activities_have_status_and_lossless_details():
         step.name, step.arguments = name, json.dumps(args, ensure_ascii=False)
         assert activity(step)[0] == expected
         step.status = "completed"
-        assert activity(step)[0] == expected.replace("正在", "已")
+        assert activity(step)[0] == expected.replace("正在", "执行成功 · ")
     step.arguments = json.dumps({"code": "print('x')\n" * 100})
     step.content = "```\n完整结果\n```"
     rows = json.loads(project(t)["processRows"])
     assert len(rows[-1]["title"]) < 180 and "\n" not in rows[-1]["title"]
     assert rows[-1]["body"].startswith(step.arguments)
     assert rows[-1]["codeBody"].startswith("````text\n")
-    assert rows[-1]["resultStatus"] == "已完成"
+    assert rows[-1]["resultStatus"] == "执行成功"
 
 
 def test_empty_reasoning_does_not_create_empty_disclosure():

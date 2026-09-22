@@ -22,6 +22,82 @@ PRIVATE_FIELDS = {"processRows", *APPROVAL_FIELDS}
 STATUS_LABELS = {"running": "执行中", "completed": "已完成", "failed": "执行失败",
                  "cancelled": "已停止", "interrupted": "已中断", "pending": "待审批",
                  "approved": "已批准", "denied": "已拒绝", "expired": "已过期"}
+STATUS_LABELS.update(waiting="等待确认", denied="已拒绝 · 未执行", timeout="确认超时 · 未执行",
+                     expired="确认已失效", returned="已返回 · 未确认执行结果", unknown="未收到执行结果", completed="执行成功")
+
+
+def tool_result_status(data: dict) -> str:
+    """Only structured result metadata can establish success or failure."""
+    output = data.get("output")
+    sources = [output, data] if isinstance(output, dict) else [data]
+    for source in sources:
+        status = str(source.get("status", "")).lower()
+        if status in {"denied", "rejected", "blocked"}:
+            return "denied"
+        if status in {"cancelled", "canceled"}:
+            return "cancelled"
+        if status in {"failed", "error"} or source.get("is_error") is True or source.get("isError") is True or source.get("success") is False:
+            return "failed"
+    for source in sources:
+        status = str(source.get("status", "")).lower()
+        for key in ("exit_code", "exitCode", "returncode"):
+            code = source.get(key)
+            if isinstance(code, int) and not isinstance(code, bool):
+                return "completed" if code == 0 else "failed"
+        if source.get("success") is True or status in {"success", "succeeded"}:
+            return "completed"
+    return "returned"
+
+
+def readable_answer(raw: str) -> str:
+    """Reflow pipe tables; deduplicate only adjacent identical prose blocks.
+
+    Original content is retained in Turn.answer and the full-answer viewer.
+    Fenced code is never interpreted as a table or deduplicated.
+    """
+    lines = raw.splitlines()
+    result, i, fence = [], 0, ""
+    def cells(line):
+        return re.split(r"(?<!\\)\|", line.strip().strip("|"))
+    while i < len(lines):
+        line = lines[i]
+        marker = re.match(r"^\s*(`{3,}|~{3,})", line)
+        if marker:
+            if not fence:
+                fence = marker[1]
+            elif marker[1][0] == fence[0] and len(marker[1]) >= len(fence):
+                fence = ""
+            result.append(line); i += 1; continue
+        if not fence and i + 1 < len(lines) and "|" in line:
+            headers = [c.strip() for c in cells(line)]
+            separator = [c.strip() for c in cells(lines[i + 1])]
+            if len(headers) > 1 and len(headers) == len(separator) and all(re.fullmatch(r":?-{3,}:?", c) for c in separator):
+                j = i + 2
+                rows = []
+                while j < len(lines) and "|" in lines[j] and lines[j].strip():
+                    values = [c.strip() for c in cells(lines[j])]
+                    if len(values) != len(headers):
+                        break
+                    rows.append(values); j += 1
+                if rows:
+                    result.append("")
+                    for number, values in enumerate(rows, 1):
+                        result.append(f"**第 {number} 项**")
+                        result.extend(f"- {h}：{v}" for h, v in zip(headers, values))
+                        result.append("")
+                    i = j; continue
+        result.append(line); i += 1
+    # Do not remove code or list repetitions, which can be intentional.
+    blocks = re.split(r"\n\s*\n", "\n".join(result))
+    deduped, fenced = [], False
+    for block in blocks:
+        has_fence = bool(re.search(r"(?m)^\s*(`{3,}|~{3,})", block))
+        plain = not fenced and not has_fence and not re.search(r"(?m)^\s*(?:[-*+>]|\d+\.)\s", block)
+        if not (plain and deduped and block.strip() == deduped[-1].strip()):
+            deduped.append(block)
+        if len(re.findall(r"(?m)^\s*(?:`{3,}|~{3,})", block)) % 2:
+            fenced = not fenced
+    return "\n\n".join(deduped).strip()
 
 
 def text(value: Any) -> str:
@@ -186,19 +262,17 @@ def activity(step: Step) -> tuple[str, str]:
         icon, verb, subject = "tool", "搜索", target or step.title
     else:
         icon, verb, subject = "tool", "调用", step.title
-    prefix = "已" if step.status == "completed" else "正在"
-    if step.status in {"failed", "cancelled", "interrupted"}:
-        prefix = STATUS_LABELS[step.status] + " · "
+    prefix = "正在" if step.status == "running" else STATUS_LABELS.get(step.status, "状态未知") + " · "
     # Fold newlines for a single activity row. Complete values remain in body.
     summary = " ".join(text(subject).split())
-    if len(summary) > 160:
-        summary = summary[:159] + "…"
+    if len(summary) > 90:
+        summary = summary[:89] + "…"
     return f"{prefix}{verb} {summary}", icon
 
 
 def project(turn: Turn, *, page_bytes: int = 1800) -> dict[str, str]:
     """Inline process pages; expanding native panels needs no callback."""
-    answer_pages = pages(turn.answer, page_bytes)
+    answer_pages = pages(readable_answer(turn.answer), page_bytes)
     thought = next((s for s in reversed(turn.steps) if s.kind == "reasoning"), None)
     status = {
         "running": "正在处理", "waiting": "等待你的审批", "completed": "已完成",
@@ -208,7 +282,7 @@ def project(turn: Turn, *, page_bytes: int = 1800) -> dict[str, str]:
     approval = next(iter(turn.pending()), None) or next(iter(reversed(turn.approvals.values())), None)
     controls = []
     if len(answer_pages) > 1:
-        controls.append(button(f"阅读全文 · {len(answer_pages)} 页", "answer", turn, page=0))
+        controls.append(button("阅读全文", "answer", turn, page=0))
     process_steps = [s for s in turn.steps if s.kind != "approval" and (s.kind not in {"reasoning", "progress"} or s.content.strip())]
     groups = [process_steps[i:i + 8] for i in range(0, len(process_steps), 8)] or [[]]
     group = max(0, min(turn.view_pages.get("_process", len(groups) - 1), len(groups) - 1))
@@ -226,10 +300,18 @@ def project(turn: Turn, *, page_bytes: int = 1800) -> dict[str, str]:
         is_thought = step.kind in {"reasoning", "progress"}
         title, icon = (step.title or "思考过程", "thought") if is_thought else activity(step)
         raw = chunks[page] or "正在等待输出…"
+        thought_text = raw
+        if is_thought and (len(raw) > 220 or len(chunks) > 1):
+            expanded = bool(turn.view_pages.get("_thought:" + step.id))
+            if not expanded:
+                thought_text = raw[:220] + ("…" if len(raw) > 220 else "")
+                navigation = []
+            navigation.insert(0, button("收起全文" if expanded else "展开全文", "thought_toggle", turn,
+                                        step_id=step.id, page=0 if expanded else 1))
         fence = "`" * max(3, 1 + max((len(m[0]) for m in re.finditer(r"`+", raw)), default=0))
         rows.append({"id": step.id, "kind": "thought" if is_thought else "tool",
             "title": title, "icon": icon, "body": raw,
-            "thoughtText": raw if is_thought else "",
+            "thoughtText": thought_text if is_thought else "",
             "sheetTitle": f"{step.name or step.title or '工具详情'} · 第 {page + 1}/{len(chunks)} 页",
             "sheetBody": STATUS_LABELS.get(step.status, "执行中") + "\n\n" + raw,
             "sheetPosition": "single" if len(chunks) == 1 else "start" if page == 0 else "end" if page == len(chunks) - 1 else "middle",
@@ -265,6 +347,7 @@ def project(turn: Turn, *, page_bytes: int = 1800) -> dict[str, str]:
         "hasApproval": "yes" if approval else "no",
         "lastMessage": (turn.answer[:100] or status),
         "content": answer_pages[0] or (turn.error if turn.status in TERMINAL else ""),
+        "finalContent": (answer_pages[0] or turn.error) if turn.status in TERMINAL else "",
     }
     return {k: v if isinstance(v, str) else json.dumps(v, ensure_ascii=False) for k, v in data.items()}
 
@@ -321,7 +404,7 @@ def detail(turn: Turn, action: str, page: int = 0, step_id: str = "", page_bytes
         step = next((s for s in turn.steps if s.id == step_id), None)
         if action == "step" and step is None:
             raise ValueError("工具记录不存在或已过期")
-        content = turn.answer if action == "answer" else (step.arguments + "\n\n" + step.content)
+        content = readable_answer(turn.answer) if action == "answer" else (step.arguments + "\n\n" + step.content)
         chunks = pages(content, page_bytes)
         page = max(0, min(page, len(chunks) - 1))
         body = chunks[page] or "暂时没有输出"

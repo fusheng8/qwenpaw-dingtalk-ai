@@ -13,7 +13,7 @@ import dingtalk_stream
 from qwenpaw.app.channels.dingtalk.channel import DingTalkChannel
 from qwenpaw.config import get_config_path
 
-from .state import Store, Turn, TERMINAL, PRIVATE_FIELDS, identity, project, detail, text
+from .state import Store, Turn, TERMINAL, PRIVATE_FIELDS, identity, project, detail, text, tool_result_status
 from .transport import CardTransport
 
 logger = logging.getLogger(__name__)
@@ -59,6 +59,7 @@ class DingTalkAIChannel(DingTalkChannel):
         self.locks = {}
         self.watchers = set()
         self.last_flush = {}
+        self.last_stream = {}
         self.tool_message_ids = {}
 
     @classmethod
@@ -117,6 +118,7 @@ class DingTalkAIChannel(DingTalkChannel):
             turn.answer = turn.error
             for approval in turn.pending():
                 approval["status"] = "expired"
+                self.sync_approval_step(turn, approval)
             turn.touch()
             self.store.save(turn)
             try:
@@ -172,6 +174,7 @@ class DingTalkAIChannel(DingTalkChannel):
     async def flush(self, turn):
         async with self.locks.setdefault(turn.id, asyncio.Lock()):
             data = project(turn, page_bytes=self.page_bytes)
+            final = turn.status in TERMINAL
             self.store.save(turn)
             if not turn.delivered:
                 await self.transport.create(turn, data)
@@ -179,8 +182,10 @@ class DingTalkAIChannel(DingTalkChannel):
                 self.store.save(turn)
             await self.transport.update(turn, data)
             if not turn.finalized:
-                final = turn.status in TERMINAL
-                await self.transport.stream(turn, data["content"] or data["status"], final=final)
+                content = data["content"] or data["status"]
+                if final or self.last_stream.get(turn.id) != content:
+                    await self.transport.stream(turn, content, final=final)
+                    self.last_stream[turn.id] = content
                 if final:
                     turn.finalized = True
                     self.store.save(turn)
@@ -258,7 +263,9 @@ class DingTalkAIChannel(DingTalkChannel):
         if "output" in data:
             output = text(data["output"])
             if completed:
-                step.content, step.status = output, "completed"
+                step.content = output
+                if step.status not in {"denied", "timeout", "expired"}:
+                    step.status = tool_result_status(data)
             else:
                 step.content = step.content + output if value(event, "delta", False) else output
         self.changed(turn)
@@ -297,9 +304,10 @@ class DingTalkAIChannel(DingTalkChannel):
         turn.ended = turn.ended or time.time()
         for step in turn.steps:
             if step.status == "running":
-                step.status = "completed" if turn.status == "completed" else "interrupted"
+                step.status = ("unknown" if step.kind == "tool" else "completed") if turn.status == "completed" else "interrupted"
         for pending in turn.pending():
             pending["status"] = "expired"
+            self.sync_approval_step(turn, pending)
         if not turn.answer and not turn.error:
             turn.answer = "本次处理已完成。"
         turn.touch()
@@ -311,6 +319,7 @@ class DingTalkAIChannel(DingTalkChannel):
         self.tool_message_ids.pop(turn.id, None)
         self.locks.pop(turn.id, None)
         self.last_flush.pop(turn.id, None)
+        self.last_stream.pop(turn.id, None)
         self.store.prune(self.retention_days)
 
     async def _on_consume_error(self, request, to_handle, err_text):
@@ -350,7 +359,9 @@ class DingTalkAIChannel(DingTalkChannel):
         if not isinstance(args, dict):
             args = {k: extra[k] for k in ("command", "cwd", "permissions", "blocked_path") if extra.get(k)}
         turn.approvals[request_id] = {"id": request_id, "title": f"审批 · {tool_name} · {severity}",
-            "summary": result_summary, "status": "pending", "tool_name": tool_name, "arguments": args}
+            "summary": result_summary, "status": "pending", "tool_name": tool_name, "arguments": args,
+            "call_id": str(call.get("id") or extra.get("provider_item_id") or "") if isinstance(call, dict) else ""}
+        self.sync_approval_step(turn, turn.approvals[request_id])
         turn.step("approval:" + request_id, "approval", f"审批详情 · {tool_name}").content = result_summary
         self.changed(turn)
         if pending:
@@ -358,6 +369,7 @@ class DingTalkAIChannel(DingTalkChannel):
                 try:
                     decision = await asyncio.shield(pending.future)
                     turn.approvals[request_id]["status"] = decision.value
+                    self.sync_approval_step(turn, turn.approvals[request_id])
                     if turn.status not in TERMINAL:
                         turn.status = "waiting" if turn.pending() else "running"
                     self.changed(turn)
@@ -368,11 +380,27 @@ class DingTalkAIChannel(DingTalkChannel):
             task.add_done_callback(self.watchers.discard)
 
     @staticmethod
+    def sync_approval_step(turn, approval):
+        # Never correlate by tool name: concurrent calls may share a name.
+        key = approval.get("call_id")
+        if not key:
+            return
+        step = turn.step(key, "tool", approval.get("tool_name", "工具"))
+        step.name = approval.get("tool_name", "工具")
+        step.arguments = text(approval.get("arguments", {}))
+        status = approval["status"]
+        if status in {"pending", "denied", "timeout", "expired"}:
+            step.status = {"pending": "waiting", "denied": "denied", "timeout": "timeout", "expired": "expired"}[status]
+        elif status == "approved" and step.status == "waiting":
+            step.status = "running"
+
+    @staticmethod
     def callback_response(public=None, private=None, *, success=True):
         result = {"cardUpdateOptions": {"updateCardDataByKey": True, "updatePrivateDataByKey": True}}
         private = dict(private or {})
         if public is not None:
             public = dict(public)
+            public.pop("content", None)  # Streaming API owns active answer text.
             for key in PRIVATE_FIELDS & public.keys():
                 private[key] = public.pop(key)
             result["cardData"] = {"cardParamMap": public}
@@ -396,6 +424,13 @@ class DingTalkAIChannel(DingTalkChannel):
             if not turn.staff_id or str(payload.get("userId") or "") != turn.staff_id:
                 raise ValueError("只有发起本轮对话的用户可以操作此卡片")
             action = params.get("action")
+            if action == "thought_toggle":
+                key = str(params.get("step_id") or "")
+                if not any(s.id == key and s.kind in {"reasoning", "progress"} for s in turn.steps):
+                    raise ValueError("思考记录不存在或已过期")
+                turn.view_pages["_thought:" + key] = 1 if str(params.get("page")) == "1" else 0
+                self.store.save(turn)
+                return self.callback_response(public=project(turn, page_bytes=self.page_bytes))
             if action == "approval_page":
                 approval_id = str(params.get("approval_id") or "")
                 current = next(iter(turn.pending()), None) or next(iter(reversed(turn.approvals.values())), None)
@@ -427,6 +462,7 @@ class DingTalkAIChannel(DingTalkChannel):
                 if resolved is None:
                     raise ValueError("审批已由其他入口处理")
                 approval["status"] = decision.value
+                self.sync_approval_step(turn, approval)
                 turn.status = "waiting" if turn.pending() else "running"
                 turn.touch()
                 self.store.save(turn)
@@ -453,6 +489,7 @@ class DingTalkAIChannel(DingTalkChannel):
                 turn.ended = time.time()
                 for approval in turn.pending():
                     approval["status"] = "expired"
+                    self.sync_approval_step(turn, approval)
                 turn.touch()
                 self.store.save(turn)
             if turn.delivered and not turn.finalized:
@@ -483,6 +520,9 @@ class DingTalkAIChannel(DingTalkChannel):
                 if turn.status not in TERMINAL:
                     turn.status, turn.error = "interrupted", "渠道已停止，请重新发送消息。"
                     turn.ended = time.time()
+                    for approval in turn.pending():
+                        approval["status"] = "expired"
+                        self.sync_approval_step(turn, approval)
                     turn.touch()
                     self.store.save(turn)
                     try:

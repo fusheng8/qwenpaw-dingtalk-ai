@@ -86,6 +86,8 @@ class CardTransport:
         return await self.request("POST", "/v1.0/card/instances/createAndDeliver", payload)
 
     async def update(self, turn, data):
+        data = dict(data)
+        data.pop("content", None)  # Never race a full update against stream writes.
         return await self.request("PUT", "/v1.0/card/instances", {
             "outTrackId": turn.id, "userIdType": 1, **self.card_data(turn, data),
             "cardUpdateOptions": {"updateCardDataByKey": True, "updatePrivateDataByKey": True}})

@@ -51,3 +51,13 @@ async def test_inline_process_is_delivered_only_to_initiator():
         assert "processRows" not in payload["cardData"]["cardParamMap"]
         assert payload["privateData"]["staff"]["cardParamMap"]["processRows"] == projection["processRows"]
     assert "processRows" in projection
+
+
+@pytest.mark.asyncio
+async def test_stream_is_the_only_answer_writer():
+    api = CardTransport("app", "placeholder", "template")
+    api.request = AsyncMock(return_value={"success": True})
+    t = Turn("t", "s", "u", "staff", "c")
+    await api.update(t, {"content": "partial", "finalContent": "final"})
+    data = api.request.await_args.args[2]["cardData"]["cardParamMap"]
+    assert "content" not in data and data["finalContent"] == "final"

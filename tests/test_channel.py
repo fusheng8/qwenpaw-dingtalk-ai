@@ -31,6 +31,40 @@ def callback(turn, action, **params):
 
 
 @pytest.mark.asyncio
+async def test_denied_call_cannot_be_overwritten_by_output_completion(channel):
+    req = request(); await channel._before_consume_process(req)
+    t = channel.find_turn(req)
+    approval = {"call_id": "call", "tool_name": "shell", "arguments": {"command": "test"}, "status": "pending"}
+    channel.sync_approval_step(t, approval)
+    assert t.steps[0].status == "waiting"
+    approval["status"] = "denied"
+    channel.sync_approval_step(t, approval)
+    channel.capture_tool(t, {"call_id": "call", "name": "shell", "output": {"exit_code": 0}}, NS(id="out"))
+    assert t.steps[0].status == "denied"
+    assert "未执行" in json.loads(project(t)["processRows"])[0]["title"]
+    channel.capture_tool(t, {"call_id": "other", "name": "shell", "arguments": {"cmd": "other"}}, NS(id="other"))
+    await channel._on_process_completed(req, "", {})
+    assert next(s for s in t.steps if s.id == "other").status == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_thought_expand_updates_same_card_without_rewriting_stream(channel):
+    req = request(); await channel._before_consume_process(req)
+    t = channel.find_turn(req)
+    t.step("r", "reasoning", "思考").content = "完整思考" * 400
+    t.answer = "当前答案"
+    await channel.flush(t)
+    before = channel.transport.stream.await_count
+    await channel.flush(t)
+    assert channel.transport.stream.await_count == before
+    response = await channel.card_callback(callback(t, "thought_toggle", step_id="r", page=1))
+    assert "content" not in response["cardData"]["cardParamMap"]
+    row = json.loads(response["userPrivateData"]["cardParamMap"]["processRows"])[0]
+    assert row["thoughtText"] == row["body"]
+    assert channel.transport.create.await_count == 1
+
+
+@pytest.mark.asyncio
 async def test_one_card_across_reasoning_tools_answer_and_finalization(channel):
     ch, req = channel, request()
     await ch._before_consume_process(req)

@@ -12,7 +12,7 @@ PRIVATE = {"detailTitle", "detailBody", "detailButtons", "detailVisible", "detai
 PRIVATE.update({"approvalTitle", "approvalBody", "approvalButtons", "approvalAllow", "approvalDeny",
     "approvalDetail", "approvalDetailTitle", "approvalPages", "approvalTarget", "hasApprovalTarget",
     "hasApprovalDetail", "hasApproval", "approvalHint", "approvalOperation"})
-MARKDOWN = {"content", "thought", "detailBody"}
+MARKDOWN = {"content", "finalContent", "thought", "detailBody"}
 LISTS = {"controls", "processNavigation", "approvalButtons", "detailButtons"}
 LISTS.update({"approvalAllow", "approvalDeny", "approvalPages"})
 BUTTON_KEYS = ("text", "action", "turn_id", "step_id", "approval_id", "page")
@@ -155,6 +155,20 @@ def buttons(key, field, loop=False, primary=False):
     return n, x
 
 
+def text_links(key, field):
+    n, x = buttons(key, field, loop=True)
+    child = n["children"][0]
+    child["componentName"] = "Link"
+    components.add("Link")
+    child["props"].update(size="small", maxLine=1)
+    for prop in ("color", "status"):
+        child["props"].pop(prop, None)
+    for prop in ("borderWidth", "borderColor", "cornerRadius", "height", "childGravity"):
+        x[0].attrib.pop(prop, None)
+    x[0][0].set("textSize", "12np")
+    return n, x
+
+
 def append(pair, child):
     pair[0]["children"].append(child[0]); pair[1].append(child[1])
 
@@ -289,17 +303,24 @@ def tool_link(key, position):
             "actionData": map_expr({"context": "@data{data.renderContext}", "cardPrivateData": map_expr({"params": map_expr(native_params), "actionIds": "@dtArrayAppend{null,'" + action + "'}"})}),
             "requestEventId": "'" + action + "'", "requestStatusKey": "'" + key + "'", "successActionText": "'" + toast + "'"})
         native_items.append(map_expr({"style": "'default'", "name": localized("'" + label + "'"), "desc": localized("''"), "icon": "''", "action": "'dtSendOutData'", "data": payload}))
-    n = node("Link", key, {"text": string("${loop.title}"), "maxLine": 1, "size": "small",
+    n = node("Grid", key, {"direction": "vertical",
         "marginLeft": 12, "marginRight": 12, "marginTop": 6, "marginBottom": 6,
         "visible": visible(*conditions), "actionType": "actionSheet", "enableClickEvent": True,
         "actionSheetTitle": string("${loop.sheetTitle}"), "actionSheetMessage": string("${loop.sheetBody}"),
-        "actionSheetItems": items, "disabledWhileForward": True})
+        "actionSheetItems": items, "disabledWhileForward": True}, [])
     sheet = map_expr({"title": localized("@subdata{'sheetTitle'}"), "message": localized("@subdata{'sheetBody'}"),
         "items": "@dtArrayAppend{null," + ",".join(native_items) + "}"})
     x = xml(userId=n["id"], marginLeft="12np", marginRight="12np", marginTop="6np", marginBottom="6np",
         visibility=show("@and{@equal{@subdata{'kind'},'tool'},@equal{@subdata{'sheetPosition'},'" + position + "'}}"), onTap="@dtActionSheet{" + sheet + "}")
-    x.append(xml("FastTextView", text="@subdata{'title'}", textSize="14np", maxLines="1", lineBreakMode="end",
-        textColor="@dtDarkModeAdapter{'#007FFF','#47A9FF'}"))
+    row, rx = thinking_text(key + "_label")
+    row["props"].update(text=string("${loop.title}  ›"), customFontSize=14,
+        maxLine={"type": "dynamicNumber", "valueType": "fixed", "value": 1},
+        marginLeft=0, marginRight=0, marginTop=0, marginBottom=0)
+    rx.set("text", "@concat{@subdata{'title'},'  ›'}")
+    rx.set("textSize", "14np"); rx.set("maxLines", "1"); rx.set("lineBreakMode", "end")
+    for side in ("Left", "Right", "Top", "Bottom"):
+        rx.set("margin" + side, "0np")
+    append((n, x), (row, rx))
     return n, x
 
 
@@ -313,7 +334,7 @@ def process_panel(prefix, running):
     c = cond("processRows[0].kind", "thought"); c["variableType"] = "loop"
     thought = wrap(prefix + "thought", c)
     append(thought, thinking_text(prefix + "thought_body"))
-    append(thought, buttons(prefix + "thought_pages", "processRows[0].navigation", loop=True))
+    append(thought, text_links(prefix + "thought_pages", "processRows[0].navigation"))
     append(event, thought)
     for position in ("single", "start", "middle", "end"):
         append(event, tool_link(prefix + "tool_" + position, position))
@@ -350,7 +371,6 @@ def build():
             cx = xml(userId=content["id"], orientation="vertical")
             append(pair, (content, cx)); pair = (content, cx)
             append(pair, process_panel(prefix, phase == 2))
-            append(pair, markdown(prefix + "answer", "content", streaming=phase == 2))
             approval = wrap(prefix + "approval", cond("hasApproval"))
             append(approval, label(prefix + "approval_title", "approvalTitle", bold=True))
             append(approval, label(prefix + "approval_operation", "approvalOperation", muted=True))
@@ -370,6 +390,7 @@ def build():
             append(fold_body, buttons(prefix + "approval_pages", "approvalPages"))
             append(approval, fold)
             append(pair, approval)
+            append(pair, markdown(prefix + "answer", "content" if phase == 2 else "finalContent", streaming=phase == 2))
             append(pair, buttons(prefix + "controls", "controls"))
             expanded = wrap(prefix + "detail", cond("detailVisible"), cond("detailEpoch", "active" if phase == 2 else "done"))
             append(expanded, label(prefix + "detail_title", "detailTitle"))
@@ -411,6 +432,7 @@ def build():
     ET.indent(native)
     editor["mockData"]["cardPrivateData"]["processRows"] = editor["mockData"]["cardData"].pop("processRows")
     mock = editor["mockData"]["cardData"]
+    mock["finalContent"] = mock["content"]
     mock.update(approvalAllow=[mock["approvalButtons"][0]], approvalDeny=[mock["approvalButtons"][1]],
         approvalTarget="python 分析销售数据.py", hasApprovalTarget="yes", hasApprovalDetail="no",
         approvalDetail="", approvalDetailTitle="展开完整说明", approvalPages=[],

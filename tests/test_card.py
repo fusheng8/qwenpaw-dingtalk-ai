@@ -5,6 +5,24 @@ from xml.etree import ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_finished_answer_uses_independent_static_binding_and_tools_are_muted():
+    card = json.loads((ROOT / "cards/dingtalk-ai-card.json").read_text())
+    editor = json.loads(card["editorData"])
+    def walk(n):
+        yield n
+        for c in n.get("children", []): yield from walk(c)
+    nodes = {n["id"]: n for n in walk(editor["schema"]["componentsTree"][0])}
+    assert nodes["qpai_p2_answer"]["props"]["content"]["variable"] == "content"
+    assert nodes["qpai_p3_answer"]["props"]["content"]["variable"] == "finalContent"
+    assert nodes["qpai_p3_answer"]["props"]["isStreaming"] is False
+    for phase in (2, 3):
+        label = nodes[f"qpai_p{phase}_tool_single_label"]
+        assert label["props"]["customLightColor"]["value"] == "#70757A"
+        assert label["props"]["maxLine"]["value"] == 1
+        row = nodes[f"qpai_p{phase}_tool_single"]
+        assert row["props"]["actionType"] == "actionSheet"
+
+
 def test_approval_is_outside_process_with_primary_action_and_local_details():
     from qpai.state import APPROVAL_FIELDS
     card = json.loads((ROOT / "cards/dingtalk-ai-card.json").read_text())
@@ -207,6 +225,7 @@ def test_thought_text_binds_a_string_not_a_markdown_variable():
     turn = Turn('t', 's', 'u', 'staff', 'c')
     original = '思考内容\n**格式标记**\n' * 300
     turn.step('r', 'reasoning', '思考过程').content = original
+    turn.view_pages['_thought:r'] = 1
     result = []
     for i in range(len(pages(original))):
         turn.view_pages['r'] = i
