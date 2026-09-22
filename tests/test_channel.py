@@ -136,7 +136,8 @@ async def test_approval_resolves_exact_request_once(channel, monkeypatch):
     wrong = await channel.card_callback(callback(turn, "approval_page", approval_id="wrong", page="0"))
     assert wrong["userPrivateData"]["cardParamMap"]["actionResult"] == "error"
     response = await channel.card_callback(callback(turn, "approve", approval_id="approval1"))
-    assert response["userPrivateData"]["cardParamMap"]["approvalTitle"] == "已允许本次执行"
+    assert response["userPrivateData"]["cardParamMap"]["hasApproval"] == "no"
+    assert response["userPrivateData"]["cardParamMap"]["approvalBody"] == ""
     assert response["userPrivateData"]["cardParamMap"]["approvalAllow"] == "[]"
     await channel.card_callback(callback(turn, "approve", approval_id="approval1"))
     fake.resolve_request.assert_awaited_once_with("approval1", ApprovalDecision.APPROVED, scope=ApprovalScope.EXACT)

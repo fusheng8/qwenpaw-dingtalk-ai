@@ -90,7 +90,7 @@ def test_confirmation_labels_keep_exact_approval_identity():
     assert all(b["approval_id"] == "request1" and b["turn_id"] == "t" for b in buttons[:2])
 
 
-def test_compact_approval_and_resolved_receipt():
+def test_compact_approval_hides_and_clears_fields_after_resolution():
     t = Turn("t", "s", "u", "staff", "c")
     a = {"id": "a", "tool_name": "shell", "summary": "读取销售数据", "status": "pending",
          "arguments": {"command": "python report.py"}}
@@ -103,7 +103,9 @@ def test_compact_approval_and_resolved_receipt():
                           ("timeout", "确认已超时"), ("expired", "确认已失效")]:
         a["status"] = status
         d = project(t)
-        assert d["hasApproval"] == "yes" and d["approvalTitle"] == title
+        assert d["hasApproval"] == "no" and d["approvalTitle"] == ""
+        assert d["approvalBody"] == d["approvalTarget"] == d["approvalDetail"] == ""
+        assert d["hasApprovalDetail"] == "no" and d["approvalPages"] == "[]"
         assert d["approvalAllow"] == d["approvalDeny"] == "[]"
         assert d["approvalHint"] == ""
 
@@ -127,6 +129,20 @@ def test_long_approval_details_are_lossless_and_pending_takes_priority():
     assert json.loads(project(t)["approvalAllow"])[0]["approval_id"] == "a"
     t.status = "failed"
     assert project(t)["approvalAllow"] == "[]"
+    assert project(t)["hasApproval"] == "no"
+
+
+def test_resolving_first_approval_shows_next_pending_then_hides():
+    t = Turn("t", "s", "u", "staff", "c")
+    for key in ("a", "b"):
+        t.approvals[key] = {"id": key, "status": "pending", "summary": key}
+    t.approvals["a"]["status"] = "approved"
+    d = project(t)
+    assert d["hasApproval"] == "yes" and d["approvalBody"] == "b"
+    assert json.loads(d["approvalAllow"])[0]["approval_id"] == "b"
+    t.approvals["b"]["status"] = "denied"
+    assert project(t)["hasApproval"] == "no"
+    assert len(t.approvals) == 2
 
 
 def test_summary_only_never_claims_to_have_parameters():

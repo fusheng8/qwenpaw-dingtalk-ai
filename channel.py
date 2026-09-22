@@ -433,7 +433,7 @@ class DingTalkAIChannel(DingTalkChannel):
                 return self.callback_response(public=project(turn, page_bytes=self.page_bytes))
             if action == "approval_page":
                 approval_id = str(params.get("approval_id") or "")
-                current = next(iter(turn.pending()), None) or next(iter(reversed(turn.approvals.values())), None)
+                current = next(iter(turn.pending()), None) if turn.status not in TERMINAL else None
                 if not current or current["id"] != approval_id:
                     raise ValueError("审批内容已经更新，请查看当前操作")
                 turn.view_pages["approval:" + approval_id] = max(0, int(params.get("page", 0)))

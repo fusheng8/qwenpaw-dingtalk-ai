@@ -279,7 +279,7 @@ def project(turn: Turn, *, page_bytes: int = 1800) -> dict[str, str]:
         "failed": "执行失败", "cancelled": "已停止", "interrupted": "服务已重启，本次执行已中断",
     }.get(turn.status, turn.status)
     # Titles only, with stable IDs. Results never flood the public card.
-    approval = next(iter(turn.pending()), None) or next(iter(reversed(turn.approvals.values())), None)
+    approval = next(iter(turn.pending()), None) if turn.status not in TERMINAL else None
     controls = []
     if len(answer_pages) > 1:
         controls.append(button("阅读全文", "answer", turn, page=0))
