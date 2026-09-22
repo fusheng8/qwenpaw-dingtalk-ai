@@ -441,3 +441,21 @@ async def test_expired_server_lease_does_not_block_next_request(channel):
     await channel.sync_tops()
     assert not first.top_active and second.top_active
     channel.transport.close_top.assert_not_awaited()
+
+
+def test_top_detail_contains_full_request_while_preview_remains_single_line(channel):
+    t = add_top_approval(channel)
+    command = "echo first\necho second\n" + "x" * 2000
+    summary = "风险说明\n" * 1000
+    t.approvals["a"].update(arguments={"command": command, "cwd": "/example"}, summary=summary)
+    view = channel.card_view(t, top=True)
+    assert "\n" not in view["approvalTarget"]
+    assert summary in view["approvalDetail"]
+    assert "x" * 2000 in view["approvalDetail"] and "/example" in view["approvalDetail"]
+    assert view["turnId"] == t.id and view["hasApprovalDetail"] == "yes"
+    payload = CardTransport.card_data(t, view)
+    assert "approvalDetail" not in payload["cardData"]["cardParamMap"]
+    assert payload["privateData"]["staff"]["cardParamMap"]["approvalDetail"] == view["approvalDetail"]
+    t.approvals["a"]["status"] = "denied"
+    view = channel.card_view(t, top=True)
+    assert view["hasApproval"] == "no" and view["approvalDetail"] == ""

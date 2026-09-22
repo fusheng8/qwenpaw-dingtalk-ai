@@ -357,25 +357,67 @@ def process_panel(prefix, running):
     return outer
 
 
+def compact_label(key, field, bold=False):
+    n, x = label(key, field, bold=bold)
+    n["props"].update(maxLine={"type": "dynamicNumber", "valueType": "fixed", "value": 1},
+        marginTop=2, marginBottom=2)
+    x.set("maxLines", "1"); x.set("lineBreakMode", "end")
+    x.set("marginTop", "2np"); x.set("marginBottom", "2np")
+    return n, x
+
+
+def approval_details(key):
+    # Same native action-sheet contract as tool details, using global private
+    # variables rather than a loop row. No request is made when opening it.
+    n, x = wrap(key, cond("hasApprovalDetail"))
+    n["props"].update(actionType="actionSheet", enableClickEvent=True,
+        actionSheetTitle=string("${approvalDetailTitle}"), actionSheetMessage=string("${approvalDetail}"),
+        actionSheetItems=[{"id": "close", "actionSheetStyle": "default", "actionSheetName": string("关闭"),
+            "actionSheetDesc": string(""), "actionSheetAction": "request",
+            "actionSheetRequestItemActionId": string("close"),
+            "actionSheetRequestItemParams": [
+                {"id": "action", "name": "action", "type": "fixed", "value": "close"},
+                {"id": "turn_id", "name": "turn_id", "type": "variable", "variable": "turnId", "variableType": "global"}],
+            "actionSheetRequestItemSuccessToast": string("")}], disabledWhileForward=True)
+    payload = map_expr({"actionType": "'0'", "cardInstanceId": "@data{data.cardInstanceId}", "actionId": "'close'",
+        "actionData": map_expr({"context": "@data{data.renderContext}", "cardPrivateData": map_expr({
+            "params": map_expr({"action": "'close'", "turn_id": data("turnId")}), "actionIds": "@dtArrayAppend{null,'close'}"})}),
+        "requestEventId": "'close'", "requestStatusKey": "'top_details_close'"})
+    item = map_expr({"style": "'default'", "name": localized("'关闭'"), "desc": localized("''"), "icon": "''",
+        "action": "'dtSendOutData'", "data": payload})
+    sheet = map_expr({"title": localized(data("approvalDetailTitle")), "message": localized(data("approvalDetail")),
+        "items": "@dtArrayAppend{null," + item + "}"})
+    x.set("onTap", "@dtActionSheet{" + sheet + "}")
+    row, rx = compact_label(key + "_label", "approvalDetailTitle")
+    row["props"]["text"] = string("参数与风险说明  ›")
+    row["props"]["color"]["value"] = "#007FFF"
+    rx.set("text", "参数与风险说明  ›"); rx.set("textColor", "@dtDarkModeAdapter{'#007FFF','#47A9FF'}")
+    append((n, x), (row, rx))
+    return n, x
+
+
 def approval_panel(prefix):
     approval = wrap(prefix + "approval", cond("hasApproval"))
-    append(approval, label(prefix + "approval_title", "approvalTitle", bold=True))
-    append(approval, label(prefix + "approval_operation", "approvalOperation", muted=True))
-    target = wrap(prefix + "approval_target", cond("hasApprovalTarget"))
-    append(target, label(prefix + "approval_target_text", "approvalTarget"))
-    append(approval, target)
-    brief = wrap(prefix + "approval_brief", {**cond("approvalBody", ""), "op": "notEqual"})
-    append(brief, label(prefix + "approval_body", "approvalBody"))
-    append(approval, brief)
-    append(approval, buttons(prefix + "approval_allow", "approvalAllow", primary=True))
-    append(approval, buttons(prefix + "approval_deny", "approvalDeny"))
-    hint = wrap(prefix + "approval_hint_wrap", {**cond("approvalHint", ""), "op": "notEqual"})
-    append(hint, label(prefix + "approval_hint", "approvalHint", muted=True))
-    append(approval, hint)
-    fold, fold_body = material_disclosure(prefix + "approval_", False, "approvalDetailTitle", "hasApprovalDetail")
-    append(fold_body, label(prefix + "approval_full", "approvalDetail"))
-    append(fold_body, buttons(prefix + "approval_pages", "approvalPages"))
-    append(approval, fold)
+    append(approval, compact_label(prefix + "approval_title", "approvalTitle", bold=True))
+    append(approval, compact_label(prefix + "approval_target_text", "approvalTarget"))
+    actions = wrap(prefix + "approval_actions")
+    actions[0]["props"].update(direction="horizontal", marginLeft=8, marginRight=8, marginTop=4, marginBottom=4)
+    actions[1].set("orientation", "horizontal")
+    for side in ("Left", "Right"): actions[1].set("margin" + side, "8np")
+    for side in ("Top", "Bottom"): actions[1].set("margin" + side, "4np")
+    for suffix, field, primary in [("allow", "approvalAllow", True), ("deny", "approvalDeny", False)]:
+        cell = wrap(prefix + "approval_" + suffix + "_cell")
+        cell[0]["props"].update(isAutoWidth=False, width=50, isFixedWidth=False)
+        cell[1].set("width", "0np"); cell[1].set("weight", "1")
+        action = buttons(prefix + "approval_" + suffix, field, primary=primary)
+        button = action[0]["children"][0]; bx = action[1][0]
+        button["props"].update(marginLeft=4, marginRight=4, marginTop=0, marginBottom=0)
+        bx.set("height", "44np")
+        for side in ("Left", "Right"): bx.set("margin" + side, "4np")
+        for side in ("Top", "Bottom"): bx.set("margin" + side, "0np")
+        append(cell, action); append(actions, cell)
+    append(approval, actions)
+    append(approval, approval_details(prefix + "approval_details"))
     return approval
 
 
@@ -389,7 +431,7 @@ def build(top=False):
             backgroundColor="@dtDarkModeAdapter{'#FFFFFF','#1E1E1E'}")
         append((root, native), approval_panel("top_"))
         errors = wrap("top_error", cond("detailVisible"))
-        append(errors, label("top_error_text", "detailBody", muted=True))
+        append(errors, compact_label("top_error_text", "detailBody"))
         append((root, native), errors)
     else:
         root = node("AICardContainer", "root", {"enablePending": True, "enableWriting": True,
@@ -465,6 +507,9 @@ def build(top=False):
         approvalTarget="python 分析销售数据.py", hasApprovalTarget="yes", hasApprovalDetail="no",
         approvalDetail="", approvalDetailTitle="展开完整说明", approvalPages=[],
         approvalHint="仅允许本次操作，不会自动批准后续操作。", approvalOperation="操作 · 执行数据分析")
+    if top:
+        mock.update(approvalTitle="需要确认 · 数据分析", approvalDetailTitle="完整参数与风险说明",
+            hasApprovalDetail="yes", approvalDetail="操作：数据分析\n\n完整参数\npython 分析销售数据.py\n\n风险说明\n读取本地销售数据并生成汇总报告。仅允许本次操作。")
     for key in list(mock):
         if key in PRIVATE:
             editor["mockData"]["cardPrivateData"][key] = mock.pop(key)

@@ -241,3 +241,31 @@ def test_thought_text_binds_a_string_not_a_markdown_variable():
         assert '上一页' not in sheet.get('onTap') and '下一页' not in sheet.get('onTap')
     turn.status = 'completed'
     assert json.loads(project(turn)['processRows'])[0]['thoughtText']
+
+
+def test_ceiling_has_bounded_header_and_parallel_actions_before_details():
+    card = json.loads((ROOT / "cards/dingtalk-approval-top-card.json").read_text())
+    editor = json.loads(card["editorData"])
+    def walk(n):
+        yield n
+        for c in n.get("children", []): yield from walk(c)
+    nodes = {n["id"]: n for n in walk(editor["schema"]["componentsTree"][0])}
+    approval = nodes["qpai_top_approval"]
+    assert [n["id"] for n in approval["children"]] == [
+        "qpai_top_approval_title", "qpai_top_approval_target_text",
+        "qpai_top_approval_actions", "qpai_top_approval_details"]
+    for key in ("title", "target_text"):
+        assert nodes["qpai_top_approval_" + key]["props"]["maxLine"]["value"] == 1
+    actions = nodes["qpai_top_approval_actions"]
+    assert actions["props"]["direction"] == "horizontal" and len(actions["children"]) == 2
+    sheet = nodes["qpai_top_approval_details"]
+    assert sheet["props"]["actionType"] == "actionSheet"
+    assert sheet["props"]["actionSheetMessage"]["content"] == "${approvalDetail}"
+    native = ET.fromstring(card["widgetInfo"])
+    elements = {x.get("userId"): x for x in native.iter() if x.get("userId")}
+    assert elements[actions["id"]].get("orientation") == "horizontal"
+    for action in ("allow", "deny"):
+        assert elements[f"qpai_top_approval_{action}_cell"].get("weight") == "1"
+        assert elements[f"qpai_top_approval_{action}_button"].get("height") == "44np"
+    assert not any("cardPrivateData.approvalBody" in x.get("text", "") or
+                   "cardPrivateData.approvalDetail}" in x.get("text", "") for x in native.iter())

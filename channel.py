@@ -202,7 +202,21 @@ class DingTalkAIChannel(DingTalkChannel):
     def card_view(self, turn, *, top=False):
         data = project(turn, page_bytes=self.page_bytes)
         if top:
-            return {key: value for key, value in data.items() if key in APPROVAL_FIELDS}
+            current = next(iter(turn.pending()), None) if turn.status not in TERMINAL else None
+            result = {key: value for key, value in data.items() if key in APPROVAL_FIELDS}
+            result["turnId"] = turn.id
+            if current:
+                tool = str(current.get("tool_name") or "工具")
+                result["approvalTitle"] = "需要确认 · " + tool[:32]
+                # Always include the complete request, even if the inline preview
+                # was short. Nothing expands vertically inside the ceiling.
+                result["approvalDetailTitle"] = "完整参数与风险说明"
+                result["approvalDetail"] = ("操作：" + tool + "\n\n完整参数\n" + text(current.get("arguments") or {})
+                    + "\n\n风险说明\n" + text(current.get("summary"))
+                    + "\n\n仅允许本次操作，不会自动批准后续操作。")
+                result["hasApprovalDetail"] = "yes"
+                result["approvalTarget"] = " ".join((result["approvalTarget"] or result["approvalOperation"]).split())
+            return result
         # Also clears approvals on previously imported main-card templates.
         for key in APPROVAL_FIELDS:
             data[key] = "[]" if key in {"approvalButtons", "approvalAllow", "approvalDeny", "approvalPages"} else "no" if key.startswith("has") else ""
