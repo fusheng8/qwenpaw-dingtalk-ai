@@ -474,7 +474,7 @@ def build(top=False):
         row.update({"sheetTitle": "工具详情 · 第 1/1 页", "sheetBody": row["body"], "sheetPosition": "single", "turn_id": "preview", "previousPage": "0", "nextPage": "0", "codeBody": "```text\n" + row["body"] + "\n```", "toolName": {"tool1": "Shell", "tool2": "文件读取", "tool3": "客户信息服务"}.get(row["id"], ""),
             "resultStatus": "执行中" if row["id"] == "tool3" else "已完成"})
     return {"editorData": json.dumps(editor, ensure_ascii=False, separators=(",", ":")),
-            "widgetInfo": ET.tostring(native, encoding="unicode"), "type": "im", "mode": "card"}
+            "widgetInfo": ET.tostring(native, encoding="unicode"), "type": "onebox" if top else "im", "mode": "card"}
 
 
 if __name__ == "__main__":

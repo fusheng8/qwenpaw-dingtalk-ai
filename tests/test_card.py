@@ -12,6 +12,7 @@ def test_finished_answer_uses_independent_static_binding_and_tools_are_muted():
         yield n
         for c in n.get("children", []): yield from walk(c)
     nodes = {n["id"]: n for n in walk(editor["schema"]["componentsTree"][0])}
+    assert card["type"] == "im"
     assert nodes["qpai_p2_answer"]["props"]["content"]["variable"] == "content"
     assert nodes["qpai_p3_answer"]["props"]["content"]["variable"] == "finalContent"
     assert nodes["qpai_p3_answer"]["props"]["isStreaming"] is False
@@ -37,6 +38,8 @@ def test_approval_is_in_separate_normal_top_card():
     nodes = {n["id"]: n for n in walk(editor["schema"]["componentsTree"][0])}
     native = ET.fromstring(card["widgetInfo"])
     assert set(nodes) == {x.get("userId") for x in native.iter() if x.get("userId")}
+    # Official builder CardType.Onebox is "onebox"; import checks the envelope.
+    assert card["type"] == "onebox" and card["mode"] == "card"
     assert editor["extension"]["extendType"] == "NORMAL"
     assert editor["schema"]["componentsTree"][0]["componentName"] == "Card"
     variables = {v["name"]: v for v in editor["variableList"]}
