@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import logging
@@ -13,6 +14,7 @@ from types import SimpleNamespace
 import dingtalk_stream
 from qwenpaw.app.channels.dingtalk.channel import DingTalkChannel
 from qwenpaw.config import get_config_path
+from qwenpaw.app.channels.dingtalk.content_utils import parse_data_url
 
 from .state import PAGE_BYTES, Store, Turn, TERMINAL, PRIVATE_FIELDS, APPROVAL_FIELDS, identity, project, detail, text, tool_result_status
 from .transport import CardTransport
@@ -493,6 +495,44 @@ class DingTalkAIChannel(DingTalkChannel):
 
     async def _send_model_fallback_notice(self, to_handle, event, meta):
         return
+
+    async def _send_media_part_via_webhook(self, session_webhook, part):
+        if value(part, "type") == "image":
+            url = value(part, "image_url", "") or ""
+            if self._is_public_http_url(url):
+                return await self._send_payload_via_session_webhook(session_webhook,
+                    {"msgtype": "image", "image": {"picURL": url}})
+            # Uploaded images use the documented Open API photoURL=mediaId.
+            # Do not wrap local images in Markdown cards.
+            return False
+        return await super()._send_media_part_via_webhook(session_webhook, part)
+
+    async def _send_media_part_via_open_api(self, part, conversation_id, conversation_type, sender_staff_id):
+        if value(part, "type") != "image":
+            return await super()._send_media_part_via_open_api(part, conversation_id,
+                conversation_type, sender_staff_id)
+        url = value(part, "image_url", "") or value(part, "file_url", "") or ""
+        photo = url if self._is_public_http_url(url) else (
+            value(part, "media_id") or value(part, "mediaId") or value(part, "file_id"))
+        if not photo:
+            encoded = url if url.startswith("data:") else value(part, "base64")
+            mime = value(part, "mime_type")
+            if encoded:
+                if encoded.startswith("data:"):
+                    image_bytes, mime = parse_data_url(encoded)
+                else:
+                    image_bytes = base64.b64decode(encoded, validate=True)
+            else:
+                image_bytes = await self._fetch_bytes_from_url(url) if url else None
+            if not image_bytes:
+                return False
+            filename, _ = self._guess_filename_and_ext(part, default="image.png")
+            photo = await self._upload_media(image_bytes, "image", filename=filename, content_type=mime)
+        if not photo:
+            return False
+        return await self._send_open_api_message(msg_key="sampleImageMsg",
+            msg_param={"photoURL": photo}, conversation_id=conversation_id,
+            conversation_type=conversation_type, sender_staff_id=sender_staff_id)
 
     async def send_media_parts(self, to_handle, parts, meta=None, turn=None):
         media = [p for p in parts if value(p, "type") in {"image", "file", "audio", "video"}]

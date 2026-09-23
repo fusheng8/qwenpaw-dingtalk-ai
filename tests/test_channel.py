@@ -566,3 +566,40 @@ async def test_send_file_tool_output_is_rendered_to_attachment(channel):
     assert part.file_url == "file:///tmp/report.csv"
     task = channel.flush_tasks.get(channel.find_turn(req).id)
     if task: await task
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["local", "base64", "media_id", "public"])
+async def test_images_use_native_messages_not_markdown_or_files(channel, source):
+    part = NS(type="image", **{
+        "local": {"image_url": "file:///tmp/picture.png"},
+        "base64": {"image_url": "data:image/png;base64,aW1hZ2U="},
+        "media_id": {"media_id": "@image-id"},
+        "public": {"image_url": "https://example.com/picture.png"},
+    }[source])
+    channel._fetch_bytes_from_url = AsyncMock(return_value=b"image")
+    channel._upload_media = AsyncMock(return_value="@image-id")
+    channel._send_open_api_message = AsyncMock(return_value=True)
+    channel._send_payload_via_session_webhook = AsyncMock(return_value=True)
+    ok = await channel._send_media_part_via_webhook("webhook", part)
+    if source == "public":
+        assert ok
+        assert channel._send_payload_via_session_webhook.await_args.args[1]["msgtype"] == "image"
+    else:
+        assert not ok
+        channel._send_payload_via_session_webhook.assert_not_awaited()
+    assert await channel._send_media_part_via_open_api(part, "c", "single", "staff")
+    kwargs = channel._send_open_api_message.await_args.kwargs
+    assert kwargs["msg_key"] == "sampleImageMsg"
+    assert kwargs["msg_param"]["photoURL"] == (part.image_url if source == "public" else "@image-id")
+    assert channel._upload_media.await_count == (1 if source in {"local", "base64"} else 0)
+
+
+@pytest.mark.asyncio
+async def test_failed_image_upload_does_not_send_empty_image(channel):
+    channel._fetch_bytes_from_url = AsyncMock(return_value=b"image")
+    channel._upload_media = AsyncMock(return_value=None)
+    channel._send_open_api_message = AsyncMock()
+    assert not await channel._send_media_part_via_open_api(
+        NS(type="image", image_url="file:///tmp/a.png"), "c", "group", "staff")
+    channel._send_open_api_message.assert_not_awaited()
