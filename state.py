@@ -14,6 +14,10 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+# Local page budget: interpret the documented 3 K recommendation conservatively
+# as 3,000 UTF-8 bytes, not characters or a platform-wide hard limit.
+PAGE_BYTES = 3000
+
 TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
 APPROVAL_FIELDS = {"approvalId", "approvalCommand", "approvalTitle", "approvalBody", "approvalButtons", "approvalAllow", "approvalDeny",
                    "approvalDetail", "approvalDetailTitle", "approvalPages", "approvalTarget",
@@ -108,7 +112,7 @@ def text(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2, default=str)
 
 
-def pages(value: str, limit: int = 1800) -> list[str]:
+def pages(value: str, limit: int = PAGE_BYTES) -> list[str]:
     """Split without dropping characters or cutting UTF-8 code points."""
     if limit < 4:
         raise ValueError("page limit must be at least four bytes")
@@ -281,7 +285,7 @@ def activity(step: Step) -> tuple[str, str]:
     return f"{prefix}{verb} {summary}", icon
 
 
-def project(turn: Turn, *, page_bytes: int = 1800) -> dict[str, str]:
+def project(turn: Turn, *, page_bytes: int = PAGE_BYTES) -> dict[str, str]:
     """Inline process pages; expanding native panels needs no callback."""
     answer_pages = pages(readable_answer(turn.answer), page_bytes)
     thought = next((s for s in reversed(turn.steps) if s.kind == "reasoning"), None)
@@ -394,7 +398,7 @@ def approval_view(turn: Turn, approval: dict | None, page_bytes: int) -> dict:
     return data
 
 
-def detail(turn: Turn, action: str, page: int = 0, step_id: str = "", page_bytes: int = 1800) -> dict[str, str]:
+def detail(turn: Turn, action: str, page: int = 0, step_id: str = "", page_bytes: int = PAGE_BYTES) -> dict[str, str]:
     """Private projection: one viewer's expansion must not affect another."""
     if action == "history":
         chunks = [turn.steps[i:i + 6] for i in range(0, len(turn.steps), 6)] or [[]]

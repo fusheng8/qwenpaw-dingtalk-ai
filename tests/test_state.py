@@ -274,3 +274,17 @@ def test_action_sheet_pages_preserve_full_results_and_navigation_boundaries():
         assert int(row["nextPage"]) == min(total - 1, i + 1)
         assert row["sheetPosition"] == ("start" if i == 0 else "end" if i == total - 1 else "middle")
     assert "".join(result) == step.content
+
+
+def test_default_three_k_budget_counts_bytes_and_preserves_overflow():
+    from qpai.state import PAGE_BYTES
+    assert PAGE_BYTES == 3000
+    exact = "中" * 1000
+    assert pages(exact) == [exact]
+    assert pages(exact + "🌏") == [exact, "🌏"]
+    t = Turn("t", "s", "u", "staff", "c")
+    t.answer = exact + "🌏"
+    projected = project(t)
+    assert projected["content"] == exact
+    assert json.loads(projected["controls"])[0]["action"] == "answer"
+    assert detail(t, "answer", page=1)["detailBody"] == "🌏"

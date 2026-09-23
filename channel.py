@@ -13,7 +13,7 @@ import dingtalk_stream
 from qwenpaw.app.channels.dingtalk.channel import DingTalkChannel
 from qwenpaw.config import get_config_path
 
-from .state import Store, Turn, TERMINAL, PRIVATE_FIELDS, APPROVAL_FIELDS, identity, project, detail, text, tool_result_status
+from .state import PAGE_BYTES, Store, Turn, TERMINAL, PRIVATE_FIELDS, APPROVAL_FIELDS, identity, project, detail, text, tool_result_status
 from .transport import CardTransport
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ class CardCallback(dingtalk_stream.CallbackHandler):
 class DingTalkAIChannel(DingTalkChannel):
     channel = "dingtalk_ai"
 
-    def __init__(self, *args, retention_days=30, page_bytes=1800, top_template_id="", **kwargs):
+    def __init__(self, *args, retention_days=30, page_bytes=PAGE_BYTES, top_template_id="", **kwargs):
         kwargs.update(message_type="card", streaming_enabled=True, no_text_debounce=True,
                       share_session_in_group=False, card_template_key="content")
         super().__init__(*args, **kwargs)
@@ -56,7 +56,7 @@ class DingTalkAIChannel(DingTalkChannel):
         self.top_views = {}
         self.stopping = False
         self.retention_days = max(1, min(int(retention_days), 365))
-        self.page_bytes = max(512, min(int(page_bytes), 2400))
+        self.page_bytes = max(512, min(int(page_bytes), PAGE_BYTES))
         directory = (self._workspace_dir or get_config_path().parent) / "dingtalk-ai"
         self.store = Store(directory / "turns.sqlite3")
         self.transport = CardTransport(self.client_id, self.client_secret, self.card_template_id, self.robot_code)
@@ -80,7 +80,7 @@ class DingTalkAIChannel(DingTalkChannel):
             require_mention=get("require_mention", True),
             dm_policy=get("dm_policy", "open"), group_policy=get("group_policy", "open"),
             allow_from=get("allow_from", []), deny_message=get("deny_message", ""),
-            retention_days=get("retention_days", 30), page_bytes=get("page_bytes", 1800))
+            retention_days=get("retention_days", 30), page_bytes=get("page_bytes", PAGE_BYTES))
 
     def resolve_session_id(self, sender_id, channel_meta=None):
         cid = (channel_meta or {}).get("conversation_id", "")

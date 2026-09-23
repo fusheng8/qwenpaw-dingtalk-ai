@@ -286,7 +286,7 @@ async def test_inline_paging_updates_result_in_place_without_new_card(channel):
     turn.step("cmd", "tool", "读取数据").content = "甲" * 600 + "乙" * 600
     response = await channel.card_callback(callback(turn, "inline_page", step_id="cmd", page=1))
     rows = json.loads(response["userPrivateData"]["cardParamMap"]["processRows"])
-    assert rows[0]["body"] == "乙" * 600
+    assert rows[0]["body"] == "乙" * 200
     assert "processRows" not in response["cardData"]["cardParamMap"]
     assert rows[0]["navigation"][0]["action"] == "inline_page"
     channel.transport.create.assert_awaited_once()
@@ -481,3 +481,7 @@ async def test_extended_top_approval_actions_use_native_decision_scope(channel, 
     await channel.card_callback(callback(t, action, approval_id="a"))
     fake.resolve_request.assert_awaited_once()
     await asyncio.gather(*channel.flush_tasks.values())
+
+
+def test_channel_default_page_budget_is_three_k(channel):
+    assert channel.page_bytes == 3000
