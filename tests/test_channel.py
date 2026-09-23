@@ -91,7 +91,7 @@ async def test_denied_call_cannot_be_overwritten_by_output_completion(channel):
     channel.sync_approval_step(t, approval)
     channel.capture_tool(t, {"call_id": "call", "name": "shell", "output": {"exit_code": 0}}, NS(id="out"))
     assert t.steps[0].status == "denied"
-    assert "未执行" in json.loads(project(t)["processRows"])[0]["title"]
+    assert "未执行" in json.loads(project(t)["processRows"])[0]["sheetBody"]
     channel.capture_tool(t, {"call_id": "other", "name": "shell", "arguments": {"cmd": "other"}}, NS(id="other"))
     await channel._on_process_completed(req, "", {})
     assert next(s for s in t.steps if s.id == "other").status == "unknown"

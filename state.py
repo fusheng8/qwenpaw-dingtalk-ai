@@ -258,7 +258,7 @@ def button(label: str, action: str, turn: Turn, **params) -> dict:
 
 
 def activity(step: Step) -> tuple[str, str]:
-    """Compact status + meaningful argument; never truncate stored details."""
+    """Compact action + target; execution status stays in the detail panel."""
     try:
         args = json.loads(step.arguments)
     except (ValueError, TypeError):
@@ -269,7 +269,7 @@ def activity(step: Step) -> tuple[str, str]:
     command = next((args[k] for k in ("command", "cmd", "code") if args.get(k)), "")
     target = next((args[k] for k in ("file_path", "path", "filename", "file", "url", "query", "pattern") if args.get(k)), "")
     if command or any(k in name for k in ("shell", "exec", "terminal", "bash", "python")):
-        icon, verb, subject = "command", "运行", command or step.title
+        icon, verb, subject = "command", "执行命令", command or step.title
     elif any(k in name for k in ("edit", "write", "patch", "replace")):
         icon, verb, subject = "edit", "编辑", target or step.title
     elif any(k in name for k in ("read", "open", "view")):
@@ -278,12 +278,11 @@ def activity(step: Step) -> tuple[str, str]:
         icon, verb, subject = "tool", "搜索", target or step.title
     else:
         icon, verb, subject = "tool", "调用", step.title
-    prefix = "正在" if step.status == "running" else STATUS_LABELS.get(step.status, "状态未知") + " · "
     # Fold newlines for a single activity row. Complete values remain in body.
     summary = " ".join(text(subject).split())
     if len(summary) > 90:
         summary = summary[:89] + "…"
-    return f"{prefix}{verb} {summary}", icon
+    return f"{verb} {summary}", icon
 
 
 def project(turn: Turn, *, page_bytes: int = PAGE_BYTES) -> dict[str, str]:
