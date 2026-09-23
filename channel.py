@@ -8,6 +8,7 @@ import logging
 import time
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 import dingtalk_stream
 from qwenpaw.app.channels.dingtalk.channel import DingTalkChannel
@@ -56,6 +57,7 @@ class DingTalkAIChannel(DingTalkChannel):
         self.top_views = {}
         self.stopping = False
         self.retention_days = max(1, min(int(retention_days), 365))
+        self.media_locks = {}
         self.page_bytes = max(512, min(int(page_bytes), PAGE_BYTES))
         directory = (self._workspace_dir or get_config_path().parent) / "dingtalk-ai"
         self.store = Store(directory / "turns.sqlite3")
@@ -373,6 +375,7 @@ class DingTalkAIChannel(DingTalkChannel):
 
     async def on_streaming_end(self, request, to_handle, event, send_meta, stream_type, accumulated_text=""):
         await self.on_streaming_delta(request, to_handle, event, send_meta, stream_type, accumulated_text)
+        await self.send_event_media(request, to_handle, event, send_meta)
         # Finalize only in _on_process_completed, never at a segment boundary.
 
     def capture_tool(self, turn, data, event, completed=True):
@@ -443,6 +446,15 @@ class DingTalkAIChannel(DingTalkChannel):
                     turn.set_answer(str(value(event, "id", None) or "answer"), body)
                 self.changed(turn)
 
+        await self.send_event_media(request, to_handle, event, send_meta)
+
+    async def send_event_media(self, request, to_handle, event, send_meta):
+        turn = self.find_turn(request, send_meta)
+        rendered_event = SimpleNamespace(type=value(event, "type"), content=[
+            SimpleNamespace(**p) if isinstance(p, dict) else p
+            for p in (value(event, "content", []) or [])])
+        await self.send_media_parts(to_handle, self._message_to_content_parts(rendered_event), send_meta, turn)
+
     async def _on_process_completed(self, request, to_handle, send_meta):
         turn = self.find_turn(request, send_meta)
         if not turn:
@@ -482,8 +494,46 @@ class DingTalkAIChannel(DingTalkChannel):
     async def _send_model_fallback_notice(self, to_handle, event, meta):
         return
 
+    async def send_media_parts(self, to_handle, parts, meta=None, turn=None):
+        media = [p for p in parts if value(p, "type") in {"image", "file", "audio", "video"}]
+        if not media:
+            return
+        turn = turn or self.find_turn(meta=meta)
+        send_meta = dict(meta or {})
+        if turn:
+            send_meta.setdefault("conversation_id", turn.conversation_id)
+            send_meta.setdefault("conversation_type", "group" if turn.is_group else "single")
+            send_meta.setdefault("sender_staff_id", turn.staff_id)
+            send_meta.setdefault("is_group", turn.is_group)
+        lock = self.media_locks.setdefault(turn.id if turn else to_handle, asyncio.Lock())
+        async with lock:
+            webhook = await self._get_session_webhook_for_send(to_handle, send_meta)
+            for part in media:
+                payload = part if isinstance(part, dict) else part.model_dump() if hasattr(part, "model_dump") else vars(part)
+                fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
+                if turn and fingerprint in turn.sent_media:
+                    continue
+                normalized = SimpleNamespace(**payload)
+                sent = await self._send_media_part_via_webhook(webhook, normalized) if webhook else False
+                if not sent:
+                    params = await self._resolve_open_api_params_from_handle(to_handle, send_meta)
+                    if params.get("conversation_id"):
+                        sent = await self._send_media_part_via_open_api(normalized,
+                            conversation_id=params["conversation_id"],
+                            conversation_type=params["conversation_type"],
+                            sender_staff_id=params["sender_staff_id"])
+                if not sent:
+                    raise RuntimeError("钉钉附件发送失败，请检查媒体上传权限、文件是否可读取及会话目标")
+                if turn:
+                    turn.sent_media.append(fingerprint)
+                    self.store.save(turn)
+
     async def send_content_parts(self, to_handle, parts, meta=None):
-        await self.send(to_handle, "\n".join(value(p, "text", "") or "" for p in parts), meta)
+        body = "\n".join(value(p, "text", "") or value(p, "refusal", "") or "" for p in parts
+                         if value(p, "type") in {"text", "refusal"})
+        if body.strip():
+            await self.send(to_handle, body, meta)
+        await self.send_media_parts(to_handle, parts, meta)
 
     async def send(self, to_handle, text, meta=None):
         turn = self.find_turn(meta=meta)

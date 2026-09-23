@@ -485,3 +485,84 @@ async def test_extended_top_approval_actions_use_native_decision_scope(channel, 
 
 def test_channel_default_page_budget_is_three_k(channel):
     assert channel.page_bytes == 3000
+
+
+def mock_media_delivery(ch, webhook="webhook", webhook_ok=True, api_ok=True):
+    ch._get_session_webhook_for_send = AsyncMock(return_value=webhook)
+    ch._send_media_part_via_webhook = AsyncMock(return_value=webhook_ok)
+    ch._resolve_open_api_params_from_handle = AsyncMock(return_value={
+        "conversation_id": "conversation", "conversation_type": "single", "sender_staff_id": "staff"})
+    ch._send_media_part_via_open_api = AsyncMock(return_value=api_ok)
+
+
+@pytest.mark.asyncio
+async def test_media_only_parts_are_delivered_without_erasing_answer(channel):
+    req = request(); await channel._before_consume_process(req)
+    turn = channel.find_turn(req); turn.answer = "已有回答"
+    mock_media_delivery(channel)
+    parts = [{"type": kind, **fields} for kind, fields in [
+        ("image", {"image_url": "https://example.com/a.png"}),
+        ("file", {"file_url": "/tmp/a.pdf", "filename": "a.pdf"}),
+        ("audio", {"data": "data:audio/amr;base64,YQ=="}),
+        ("video", {"video_url": "/tmp/a.mp4"})]]
+    await channel.send_content_parts("target", parts, req.channel_meta)
+    await channel.send_content_parts("target", parts, req.channel_meta)
+    assert channel._send_media_part_via_webhook.await_count == 4
+    assert turn.answer == "已有回答"
+    assert len(channel.store.get(turn.id).sent_media) == 4
+    channel.transport.create.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_completed_message_delivers_image_and_retains_card_text(channel):
+    req = request(); await channel._before_consume_process(req)
+    mock_media_delivery(channel)
+    await channel.on_event_message_completed(req, "target", NS(id="answer", type="message", content=[
+        {"type": "text", "text": "这是图片"},
+        {"type": "image", "image_url": "https://example.com/a.png"}]), req.channel_meta)
+    assert channel.find_turn(req).answer == "这是图片"
+    assert channel._send_media_part_via_webhook.await_args.args[1].image_url.endswith("a.png")
+    channel.transport.create.assert_awaited_once()
+    task = channel.flush_tasks.get(channel.find_turn(req).id)
+    if task: await task
+
+
+@pytest.mark.asyncio
+async def test_media_webhook_failure_falls_back_and_failed_send_can_retry(channel):
+    req = request(); await channel._before_consume_process(req)
+    mock_media_delivery(channel, webhook_ok=False, api_ok=False)
+    parts = [NS(type="file", file_url="/tmp/report.csv", filename="report.csv")]
+    with pytest.raises(RuntimeError, match="附件发送失败"):
+        await channel.send_content_parts("target", parts, req.channel_meta)
+    assert not channel.find_turn(req).sent_media
+    channel._send_media_part_via_open_api.return_value = True
+    await channel.send_content_parts("target", parts, req.channel_meta)
+    assert len(channel.find_turn(req).sent_media) == 1
+    assert channel._send_media_part_via_open_api.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_stream_end_delivers_media_without_second_card(channel):
+    req = request(); await channel._before_consume_process(req)
+    mock_media_delivery(channel, webhook=None)
+    event = NS(id="stream", type="message", content=[NS(type="image", image_url="https://example.com/a.png")])
+    await channel.on_streaming_end(req, "target", event, req.channel_meta, "message", "生成完成")
+    channel._send_media_part_via_open_api.assert_awaited_once()
+    channel.transport.create.assert_awaited_once()
+    task = channel.flush_tasks.get(channel.find_turn(req).id)
+    if task: await task
+
+
+@pytest.mark.asyncio
+async def test_send_file_tool_output_is_rendered_to_attachment(channel):
+    req = request(); await channel._before_consume_process(req)
+    mock_media_delivery(channel)
+    event = NS(id="tool-file", type="function_call_output", content=[NS(type="data", data={
+        "name": "send_file_to_user", "call_id": "send-1", "output": json.dumps([
+            {"type": "data", "name": "report.csv", "source": {
+                "type": "url", "url": "file:///tmp/report.csv", "media_type": "text/csv"}}])})])
+    await channel.on_event_message_completed(req, "target", event, req.channel_meta)
+    part = channel._send_media_part_via_webhook.await_args.args[1]
+    assert part.file_url == "file:///tmp/report.csv"
+    task = channel.flush_tasks.get(channel.find_turn(req).id)
+    if task: await task

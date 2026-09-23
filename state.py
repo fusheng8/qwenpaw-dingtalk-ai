@@ -172,6 +172,7 @@ class Turn:
     top_active: bool = False
     top_expires: float = 0
     top_error: str = ""
+    sent_media: list[str] = field(default_factory=list)
 
     def touch(self):
         self.updated = time.time()
